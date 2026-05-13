@@ -15,12 +15,14 @@ def test_rules_from_table_rows_converts_percent_to_scheduler_value() -> None:
         [
             (" Frequency<1000 note:Japanese ", "90"),
             ("tag:high-value", "95%"),
+            ("tag:decimal", "0.90"),
         ]
     )
 
     assert rules == [
         Rule(query="Frequency<1000 note:Japanese", desired_retention=0.9),
         Rule(query="tag:high-value", desired_retention=0.95),
+        Rule(query="tag:decimal", desired_retention=0.9),
     ]
 
 

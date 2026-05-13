@@ -6,6 +6,8 @@ Configure ordered rules in JSON. The first rule whose Anki search query matches
 the current review card provides the desired retention override.
 
 The same rules can be edited from `Tools > Dynamic Desired Retention Table`.
+In the table, `90`, `90%`, and `0.90` all mean 90%.
+When editing JSON directly, use decimal values: `0.9` means 90%.
 
 Use decimal desired retention values:
 

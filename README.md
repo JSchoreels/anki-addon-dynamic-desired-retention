@@ -24,3 +24,5 @@ The first matching rule wins. If no rule matches, Anki keeps the deck/preset
 desired retention.
 
 You can edit the same rules from `Tools > Dynamic Desired Retention Table`.
+In the table, `90`, `90%`, and `0.90` all mean 90%.
+When editing JSON directly, use decimal values: `0.9` means 90%.

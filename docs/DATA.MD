@@ -30,10 +30,11 @@ config can be fixed without changing scheduler behavior for unrelated cards.
 `Tools > Dynamic Desired Retention Table` opens an editable table for the same
 ordered rules.
 
-The table displays desired retention as a percentage. On save, the add-on writes
-the config through `mw.addonManager.writeConfig(__name__, config)` and stores the
-value as Anki's scheduler decimal. For example, `90` in the table is written as
-`0.9`.
+The table accepts desired retention as a percentage or as Anki's scheduler
+decimal. On save, the add-on writes the config through
+`mw.addonManager.writeConfig(__name__, config)` and stores the value as Anki's
+scheduler decimal. For example, `90`, `90%`, and `0.90` in the table are written
+as `0.9`.
 
 Saving replaces the full `rules` list with the rows currently in the table. The
 add-on reloads its in-memory rules immediately after writing the config.

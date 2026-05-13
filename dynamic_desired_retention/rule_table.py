@@ -27,12 +27,13 @@ def _rule_from_table_row(
     if not normalized_query:
         raise RuleTableError(f"Row {row_number}: search query is required.")
 
-    percent = _parse_percent(desired_retention_percent, row_number)
+    percent = _parse_table_desired_retention(desired_retention_percent, row_number)
     return Rule(query=normalized_query, desired_retention=percent / 100)
 
 
-def _parse_percent(value: str, row_number: int) -> float:
+def _parse_table_desired_retention(value: str, row_number: int) -> float:
     normalized_value = value.strip()
+    has_percent_suffix = normalized_value.endswith("%")
     if normalized_value.endswith("%"):
         normalized_value = normalized_value[:-1].strip()
 
@@ -42,6 +43,9 @@ def _parse_percent(value: str, row_number: int) -> float:
         raise RuleTableError(
             f"Row {row_number}: desired retention must be a percentage."
         ) from exc
+
+    if not has_percent_suffix and 0 < percent <= 1:
+        percent *= 100
 
     if not 0 < percent <= 100:
         raise RuleTableError(
