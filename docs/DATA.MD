@@ -56,3 +56,15 @@ deck/preset desired retention.
 
 Search errors are logged as exceptions for the specific rule and treated as a
 non-match.
+
+## External Resolver Read
+
+Other add-ons can call the top-level
+`dynamic_desired_retention.effective_desired_retention()` API with a collection,
+card and base desired retention. The add-on applies the same ordered rule
+matching described above and returns either the matching rule value or the
+incoming base value.
+
+This API does not update cards or config. Callers that reschedule or otherwise
+write card data remain responsible for persisting the returned desired retention
+when that is part of their workflow.

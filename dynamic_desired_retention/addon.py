@@ -7,6 +7,7 @@ from aqt import gui_hooks, mw
 from aqt.addons import AddonManager
 from aqt.qt import QAction, qconnect
 
+from .api import set_desired_retention_provider
 from .config import Rule, load_rules
 from .matcher import DesiredRetentionMatcher
 from .ui import RulesTableDialog
@@ -21,6 +22,7 @@ class DynamicDesiredRetentionAddon:
 
     def setup(self) -> None:
         self._reload_config()
+        set_desired_retention_provider(self)
         if mw is not None:
             mw.addonManager.setConfigUpdatedAction(self._module, self._on_config_updated)
             self._add_tools_menu_entry()
@@ -31,11 +33,24 @@ class DynamicDesiredRetentionAddon:
     def compute_desired_retention(
         self, desired_retention: float | None, reviewer: Any, card: Any
     ) -> float | None:
+        return self.effective_desired_retention(
+            collection=reviewer.mw.col,
+            card=card,
+            current_desired_retention=desired_retention,
+        )
+
+    def effective_desired_retention(
+        self,
+        *,
+        collection: Any,
+        card: Any,
+        current_desired_retention: float | None,
+    ) -> float | None:
         matcher = DesiredRetentionMatcher(self._rules, self._logger)
         return matcher.desired_retention_for_card(
-            collection=reviewer.mw.col,
+            collection=collection,
             card_id=card.id,
-            current_desired_retention=desired_retention,
+            current_desired_retention=current_desired_retention,
         )
 
     def _on_config_updated(self, _config: Any) -> None:
