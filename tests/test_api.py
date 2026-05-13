@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 from dynamic_desired_retention.api import (
@@ -64,3 +65,39 @@ def test_addon_root_exports_effective_desired_retention() -> None:
     spec.loader.exec_module(module)
 
     assert callable(module.effective_desired_retention)
+
+
+def test_addon_root_exposes_stable_import_alias() -> None:
+    root_init = Path(__file__).parents[1] / "__init__.py"
+    previous_package = sys.modules.pop("dynamic_desired_retention", None)
+    previous_api = sys.modules.pop("dynamic_desired_retention.api", None)
+
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "160848019",
+            root_init,
+            submodule_search_locations=[str(root_init.parent)],
+        )
+        assert spec is not None
+        assert spec.loader is not None
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["160848019"] = module
+        spec.loader.exec_module(module)
+
+        assert callable(
+            sys.modules["dynamic_desired_retention"].effective_desired_retention
+        )
+        assert callable(
+            sys.modules["dynamic_desired_retention.api"].effective_desired_retention
+        )
+    finally:
+        sys.modules.pop("160848019", None)
+        sys.modules.pop("160848019.dynamic_desired_retention", None)
+        sys.modules.pop("160848019.dynamic_desired_retention.api", None)
+        sys.modules.pop("dynamic_desired_retention", None)
+        sys.modules.pop("dynamic_desired_retention.api", None)
+        if previous_package is not None:
+            sys.modules["dynamic_desired_retention"] = previous_package
+        if previous_api is not None:
+            sys.modules["dynamic_desired_retention.api"] = previous_api
