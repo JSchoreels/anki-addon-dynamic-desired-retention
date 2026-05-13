@@ -21,4 +21,6 @@ zip -r "${output_file}" \
   -x '*.pyc' \
   -x '.pytest_cache/*'
 
+python3 scripts/validate_ankiaddon.py "${output_file}"
+
 echo "Created ${output_file}"
