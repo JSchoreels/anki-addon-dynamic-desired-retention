@@ -21,6 +21,74 @@
           }
         }
       }
+    },
+    "field_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["note_type", "field", "value_type", "thresholds"],
+        "properties": {
+          "note_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1
+          },
+          "filter_query": {
+            "type": "string"
+          },
+          "field_value_mode": {
+            "type": "string",
+            "enum": ["absolute", "relative"]
+          },
+          "relative_top_direction": {
+            "type": "string",
+            "enum": ["lower", "higher"]
+          },
+          "value_type": {
+            "type": "string",
+            "enum": ["number", "text"]
+          },
+          "linear_between_thresholds": {
+            "type": "boolean"
+          },
+          "minimum_desired_retention": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1
+          },
+          "thresholds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["value", "desired_retention"],
+              "properties": {
+                "value": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "desired_retention": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "required": ["rules"]

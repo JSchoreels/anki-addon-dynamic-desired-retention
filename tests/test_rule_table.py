@@ -5,6 +5,7 @@ import pytest
 from dynamic_desired_retention.config import Rule
 from dynamic_desired_retention.rule_table import (
     RuleTableError,
+    normalize_table_desired_retention,
     rules_from_table_rows,
     table_row_from_rule,
 )
@@ -43,3 +44,9 @@ def test_table_row_from_rule_displays_percent() -> None:
     assert table_row_from_rule(
         Rule(query="note:Japanese", desired_retention=0.9)
     ) == ("note:Japanese", "90")
+
+
+def test_normalize_table_desired_retention_displays_percent() -> None:
+    assert normalize_table_desired_retention("0.90") == "90"
+    assert normalize_table_desired_retention("90%") == "90"
+    assert normalize_table_desired_retention("95.50") == "95.5"

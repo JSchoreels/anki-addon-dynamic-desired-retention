@@ -4,6 +4,22 @@ from dataclasses import dataclass
 from logging import Logger
 from typing import Any
 
+from .field_rules import (
+    FieldRule,
+    FieldThreshold,
+    field_rules_to_config,
+    load_field_rules,
+)
+
+__all__ = [
+    "FieldRule",
+    "FieldThreshold",
+    "Rule",
+    "config_from_rules",
+    "load_field_rules",
+    "load_rules",
+]
+
 
 @dataclass(frozen=True)
 class Rule:
@@ -28,13 +44,18 @@ def load_rules(config: dict[str, Any] | None, logger: Logger) -> list[Rule]:
     return rules
 
 
-def config_from_rules(rules: list[Rule]) -> dict[str, Any]:
-    return {
+def config_from_rules(
+    rules: list[Rule], field_rules: list[FieldRule] | None = None
+) -> dict[str, Any]:
+    config: dict[str, Any] = {
         "rules": [
             {"query": rule.query, "desired_retention": rule.desired_retention}
             for rule in rules
         ]
     }
+    if field_rules is not None:
+        config["field_rules"] = field_rules_to_config(field_rules)
+    return config
 
 
 def _load_rule(raw_rule: Any, index: int, logger: Logger) -> Rule | None:

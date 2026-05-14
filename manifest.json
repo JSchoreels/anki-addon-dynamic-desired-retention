@@ -1,9 +1,9 @@
 {
   "package": "160848019",
-  "name": "Dynamic Desired Retention",
-  "mod": 0,
+  "name": "FSRS : Dynamic Desired Retention",
+  "mod": 1778756335,
   "author": "jschoreels",
-  "version": "0.1.0",
-  "homepage": "https://ankiweb.net/shared/info/160848019?cb=1778705771363",
+  "version": "0.2.0",
+  "homepage": "https://ankiweb.net/shared/info/160848019",
   "min_point_version": 0
 }

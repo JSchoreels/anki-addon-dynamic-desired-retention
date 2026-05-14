@@ -20,6 +20,16 @@ def table_row_from_rule(rule: Rule) -> tuple[str, str]:
     return rule.query, _format_percent(rule.desired_retention * 100)
 
 
+def normalize_table_desired_retention(value: str) -> str:
+    return _format_percent(_parse_table_desired_retention(value, 1))
+
+
+def table_desired_retention_to_scheduler_value(
+    value: str, row_number: int
+) -> float:
+    return _parse_table_desired_retention(value, row_number) / 100
+
+
 def _rule_from_table_row(
     query: str, desired_retention_percent: str, row_number: int
 ) -> Rule:
@@ -27,8 +37,10 @@ def _rule_from_table_row(
     if not normalized_query:
         raise RuleTableError(f"Row {row_number}: search query is required.")
 
-    percent = _parse_table_desired_retention(desired_retention_percent, row_number)
-    return Rule(query=normalized_query, desired_retention=percent / 100)
+    desired_retention = table_desired_retention_to_scheduler_value(
+        desired_retention_percent, row_number
+    )
+    return Rule(query=normalized_query, desired_retention=desired_retention)
 
 
 def _parse_table_desired_retention(value: str, row_number: int) -> float:

@@ -12,14 +12,23 @@ from aqt.qt import (
     QHeaderView,
     QMessageBox,
     QPushButton,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
     qconnect,
 )
 
-from .config import Rule, config_from_rules
-from .rule_table import RuleTableError, rules_from_table_rows, table_row_from_rule
+from .config import FieldRule, Rule, config_from_rules
+from .field_rule_table import FieldRuleTableError, field_rules_from_table_rows
+from .field_rules_editor import FieldRulesEditor
+from .rule_table import (
+    RuleTableError,
+    normalize_table_desired_retention,
+    rules_from_table_rows,
+    table_row_from_rule,
+)
 
 
 class RulesTableDialog(QDialog):
@@ -30,6 +39,8 @@ class RulesTableDialog(QDialog):
         addon_manager: Any,
         module: str,
         rules: list[Rule],
+        field_rules: list[FieldRule],
+        collection: Any,
         logger: Logger,
         on_saved: Callable[[], None],
     ) -> None:
@@ -38,12 +49,44 @@ class RulesTableDialog(QDialog):
         self._module = module
         self._logger = logger
         self._on_saved = on_saved
+        self._normalizing_table_item = False
 
         self.setWindowTitle("Dynamic Desired Retention Table")
-        self.resize(780, 460)
+        self.resize(980, 620)
 
         root_layout = QVBoxLayout(self)
 
+        self._tabs = QTabWidget()
+        root_layout.addWidget(self._tabs)
+
+        search_tab = QWidget()
+        self._build_search_rules_tab(search_tab, rules)
+        self._tabs.addTab(search_tab, "Search Rules")
+
+        self._field_rules_editor = FieldRulesEditor(
+            field_rules=field_rules,
+            collection=collection,
+            logger=logger,
+        )
+        self._tabs.addTab(self._field_rules_editor, "Field Rules")
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        root_layout.addWidget(button_box)
+
+        qconnect(
+            button_box.button(QDialogButtonBox.StandardButton.Save).clicked,
+            self._save,
+        )
+        qconnect(
+            button_box.button(QDialogButtonBox.StandardButton.Cancel).clicked,
+            self.reject,
+        )
+
+    def _build_search_rules_tab(self, tab: QWidget, rules: list[Rule]) -> None:
+        layout = QVBoxLayout(tab)
         controls_layout = QHBoxLayout()
         self._add_button = QPushButton("Add")
         self._remove_button = QPushButton("Remove")
@@ -54,7 +97,7 @@ class RulesTableDialog(QDialog):
         controls_layout.addWidget(self._up_button)
         controls_layout.addWidget(self._down_button)
         controls_layout.addStretch(1)
-        root_layout.addLayout(controls_layout)
+        layout.addLayout(controls_layout)
 
         self._table = QTableWidget(0, 2)
         self._table.setHorizontalHeaderLabels(
@@ -68,26 +111,13 @@ class RulesTableDialog(QDialog):
         self._table.horizontalHeader().setSectionResizeMode(
             1, QHeaderView.ResizeMode.ResizeToContents
         )
-        root_layout.addWidget(self._table)
-
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        root_layout.addWidget(button_box)
+        layout.addWidget(self._table)
 
         qconnect(self._add_button.clicked, self._add_row)
         qconnect(self._remove_button.clicked, self._remove_selected_row)
         qconnect(self._up_button.clicked, self._move_selected_row_up)
         qconnect(self._down_button.clicked, self._move_selected_row_down)
-        qconnect(
-            button_box.button(QDialogButtonBox.StandardButton.Save).clicked,
-            self._save,
-        )
-        qconnect(
-            button_box.button(QDialogButtonBox.StandardButton.Cancel).clicked,
-            self.reject,
-        )
+        qconnect(self._table.itemChanged, self._normalize_desired_retention_item)
 
         self._load_rules(rules)
 
@@ -106,6 +136,24 @@ class RulesTableDialog(QDialog):
         self._table.insertRow(row)
         self._table.setItem(row, 0, QTableWidgetItem(query))
         self._table.setItem(row, 1, QTableWidgetItem(desired_retention_percent))
+
+    def _normalize_desired_retention_item(self, item: QTableWidgetItem) -> None:
+        if self._normalizing_table_item or item.column() != 1:
+            return
+
+        try:
+            normalized = normalize_table_desired_retention(item.text())
+        except RuleTableError:
+            return
+
+        if normalized == item.text():
+            return
+
+        self._normalizing_table_item = True
+        try:
+            item.setText(normalized)
+        finally:
+            self._normalizing_table_item = False
 
     def _remove_selected_row(self) -> None:
         row = self._table.currentRow()
@@ -133,12 +181,21 @@ class RulesTableDialog(QDialog):
     def _save(self) -> None:
         try:
             rules = rules_from_table_rows(self._table_rows())
-        except RuleTableError as exc:
+            field_rules = field_rules_from_table_rows(
+                self._field_rules_editor.field_rule_rows()
+            )
+        except (RuleTableError, FieldRuleTableError) as exc:
             QMessageBox.warning(self, "Dynamic Desired Retention", str(exc))
             return
 
-        self._addon_manager.writeConfig(self._module, config_from_rules(rules))
-        self._logger.info("saved %s dynamic desired retention rules", len(rules))
+        self._addon_manager.writeConfig(
+            self._module, config_from_rules(rules, field_rules)
+        )
+        self._logger.info(
+            "saved %s search rules and %s field rules",
+            len(rules),
+            len(field_rules),
+        )
         self._on_saved()
         self.accept()
 

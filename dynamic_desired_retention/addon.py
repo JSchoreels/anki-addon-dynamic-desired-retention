@@ -8,7 +8,7 @@ from aqt.addons import AddonManager
 from aqt.qt import QAction, qconnect
 
 from .api import set_desired_retention_provider
-from .config import Rule, load_rules
+from .config import FieldRule, Rule, load_field_rules, load_rules
 from .matcher import DesiredRetentionMatcher
 from .ui import RulesTableDialog
 
@@ -18,6 +18,8 @@ class DynamicDesiredRetentionAddon:
         self._module = module
         self._logger = logger
         self._rules: list[Rule] = []
+        self._field_rules: list[FieldRule] = []
+        self._matcher = DesiredRetentionMatcher([], [], logger)
         self._rules_action: QAction | None = None
 
     def setup(self) -> None:
@@ -46,10 +48,9 @@ class DynamicDesiredRetentionAddon:
         card: Any,
         current_desired_retention: float | None,
     ) -> float | None:
-        matcher = DesiredRetentionMatcher(self._rules, self._logger)
-        return matcher.desired_retention_for_card(
+        return self._matcher.desired_retention_for_card(
             collection=collection,
-            card_id=card.id,
+            card=card,
             current_desired_retention=current_desired_retention,
         )
 
@@ -61,7 +62,15 @@ class DynamicDesiredRetentionAddon:
         if mw is not None:
             config = mw.addonManager.getConfig(self._module)
         self._rules = load_rules(config, self._logger)
-        self._logger.info("loaded %s dynamic desired retention rules", len(self._rules))
+        self._field_rules = load_field_rules(config, self._logger)
+        self._matcher = DesiredRetentionMatcher(
+            self._rules, self._field_rules, self._logger
+        )
+        self._logger.info(
+            "loaded %s search rules and %s field rules",
+            len(self._rules),
+            len(self._field_rules),
+        )
 
     def _add_tools_menu_entry(self) -> None:
         if self._rules_action is not None or mw is None:
@@ -79,6 +88,8 @@ class DynamicDesiredRetentionAddon:
             addon_manager=mw.addonManager,
             module=self._module,
             rules=self._rules,
+            field_rules=self._field_rules,
+            collection=mw.col,
             logger=self._logger,
             on_saved=self._reload_config,
         )
