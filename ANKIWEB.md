@@ -1,5 +1,10 @@
 # Dynamic Desired Retention
 
+**Warning: this add-on is intended for an Anki fork/build that includes the
+dynamic desired-retention reviewer hook, such as
+[JSchoreels/anki releases](https://github.com/JSchoreels/anki/releases). It
+will not work on standard Anki builds that do not provide that hook.**
+
 Dynamic Desired Retention lets you use different FSRS desired retention targets
 for different cards, based on normal Anki search queries or note-field
 thresholds.
@@ -19,39 +24,35 @@ uses the deck/preset desired retention as usual.
 
 ## Requirements
 
-This add-on requires an Anki build that provides:
-
-```python
-gui_hooks.reviewer_will_compute_desired_retention
-```
-
-It will not work on Anki versions that do not include that hook.
+This add-on requires a recent Anki build that supports dynamic desired
+retention during review.
 
 ## How To Use
 
-1. Open `Tools > Dynamic Desired Retention Table`.
+1. Open `Tools > FSRS Dynamic Desired Retention Table`.
 2. Add one row per search rule, or open the field-rule tab and select a note
    type plus field.
 3. For search rules, enter an Anki search query in the first column.
-4. For field rules, choose whether values are `Absolute` field values or
+4. For field rules, optionally set a `Scope Filter` to limit the cards checked
+   by the rule, and an `Exclusion` query to skip matching cards.
+5. For field rules, choose whether values are `Absolute` field values or
    `Relative` top-percentiles.
-5. Use `Higher DR for` to decide whether lower field values or higher field
+6. Use `Higher DR for` to decide whether lower field values or higher field
    values should receive the higher desired retention.
-6. Enter desired retention as `90`, `90%`, or `0.90`; they all mean 90%, and the
-   editor displays them as `90`.
-7. Save.
-
-The add-on stores the rules in Anki's add-on config. You can still edit the JSON
-config manually if you prefer. When editing JSON directly, use decimal values:
-`0.9` means 90%.
+7. Enter desired retention as a percent, such as `90`.
+8. Save.
 
 ## Field Rules
 
 Field rules let you map note-field values to desired retention without writing a
-separate Anki search query for every threshold.
+separate Anki search query for every threshold. For example, you can map
+`Frequency` values or `Top 10%` percentiles to different retention targets.
 
 Numeric field rules support:
 
+- `Scope Filter`, an Anki search query that must match for the field rule to
+  apply.
+- `Exclusion`, an Anki search query that skips matching cards.
 - `Absolute` thresholds, such as `Frequency = 1000`.
 - `Relative` thresholds, such as `Top 10%`, computed from matching notes at
   review time.
@@ -61,50 +62,10 @@ Numeric field rules support:
   important.
 - `Minimum Retention`, used for values beyond the least-important threshold.
 
-The editor sorts numeric thresholds according to `Higher DR for`, shows row
-errors when the desired-retention order is inconsistent, and keeps the
-comparison population cached while the add-on is loaded to avoid repeated scans
-during bulk rescheduling.
-
-## Example Config
-
-```json
-{
-  "rules": [
-    {
-      "query": "Frequency<1000 note:Japanese",
-      "desired_retention": 0.9
-    },
-    {
-      "query": "tag:exam",
-      "desired_retention": 0.95
-    }
-  ],
-  "field_rules": [
-    {
-      "note_type": "Japanese",
-      "field": "Frequency",
-      "field_value_mode": "relative",
-      "relative_top_direction": "lower",
-      "value_type": "number",
-      "minimum_desired_retention": 0.5,
-      "thresholds": [
-        {
-          "value": "10",
-          "desired_retention": 0.9
-        },
-        {
-          "value": "30",
-          "desired_retention": 0.8
-        }
-      ]
-    }
-  ]
-}
-```
-
-In the table UI, `0.9` is shown as `90`, and relative values are shown as
-`Top 10%`, `Top 30%`, and similar labels.
+The threshold table also shows estimated workload. `Total Workload` is the
+projected workload from the rule, and `(Current: ...)` shows the current stored
+workload for comparison. `Expected Retention` summarizes the workload-weighted
+retention across the slices.
 
 ## Notes
 
@@ -113,9 +74,8 @@ In the table UI, `0.9` is shown as `90`, and relative values are shown as
 - The add-on does not move cards into filtered decks.
 - The add-on does not retroactively reschedule cards. It affects the scheduling
   states computed when a matching card is reviewed.
-- Relative field rules read matching notes to compute percentiles; the result is
-  cached per field rule until the add-on config reloads.
-- Search errors are logged and treated as non-matches.
+- Workload estimates are read-only UI estimates. Cards without FSRS stability
+  are skipped.
 
 ## Troubleshooting
 

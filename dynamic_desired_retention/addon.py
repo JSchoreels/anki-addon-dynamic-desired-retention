@@ -75,7 +75,7 @@ class DynamicDesiredRetentionAddon:
     def _add_tools_menu_entry(self) -> None:
         if self._rules_action is not None or mw is None:
             return
-        self._rules_action = QAction("Dynamic Desired Retention Table", mw)
+        self._rules_action = QAction("FSRS Dynamic Desired Retention Table", mw)
         qconnect(self._rules_action.triggered, self._open_rules_table)
         mw.form.menuTools.addAction(self._rules_action)
 

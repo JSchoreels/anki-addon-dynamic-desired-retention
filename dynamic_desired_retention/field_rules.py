@@ -23,6 +23,7 @@ class FieldRule:
     field: str
     value_type: FieldValueType
     thresholds: list[FieldThreshold]
+    scope_query: str = ""
     filter_query: str = ""
     field_value_mode: FieldValueMode = "absolute"
     relative_top_direction: FieldRelativeTopDirection = "lower"
@@ -55,6 +56,7 @@ def _field_rule_to_config(rule: FieldRule) -> dict[str, Any]:
     config: dict[str, Any] = {
         "note_type": rule.note_type,
         "field": rule.field,
+        "scope_query": rule.scope_query,
         "filter_query": rule.filter_query,
         "field_value_mode": rule.field_value_mode,
         "relative_top_direction": rule.relative_top_direction,
@@ -80,6 +82,7 @@ def _load_field_rule(raw_rule: Any, index: int, logger: Logger) -> FieldRule | N
 
     note_type = raw_rule.get("note_type")
     field = raw_rule.get("field")
+    scope_query = raw_rule.get("scope_query", "")
     filter_query = raw_rule.get("filter_query", "")
     field_value_mode = raw_rule.get("field_value_mode", "absolute")
     relative_top_direction = raw_rule.get("relative_top_direction", "lower")
@@ -96,6 +99,10 @@ def _load_field_rule(raw_rule: Any, index: int, logger: Logger) -> FieldRule | N
 
     if not isinstance(field, str) or not field.strip():
         logger.warning("ignored field rule %s: field must be a non-empty string", index)
+        return None
+
+    if not isinstance(scope_query, str):
+        logger.warning("ignored field rule %s: scope_query must be a string", index)
         return None
 
     if not isinstance(filter_query, str):
@@ -191,6 +198,7 @@ def _load_field_rule(raw_rule: Any, index: int, logger: Logger) -> FieldRule | N
     return FieldRule(
         note_type=note_type.strip(),
         field=field.strip(),
+        scope_query=scope_query.strip(),
         filter_query=filter_query.strip(),
         field_value_mode=field_value_mode,
         relative_top_direction=relative_top_direction,

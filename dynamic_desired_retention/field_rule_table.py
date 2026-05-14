@@ -38,6 +38,7 @@ class FieldRuleRow:
     value_type: str
     linear_between_thresholds: bool
     thresholds: list[FieldThresholdRow]
+    scope_query: str = ""
     field_value_mode: str = "absolute"
     relative_top_direction: str = "lower"
     minimum_desired_retention_percent: str = ""
@@ -55,6 +56,7 @@ def table_rows_from_field_rules(field_rules: Sequence[FieldRule]) -> list[FieldR
         FieldRuleRow(
             note_type=rule.note_type,
             field=rule.field,
+            scope_query=rule.scope_query,
             filter_query=rule.filter_query,
             field_value_mode=rule.field_value_mode,
             relative_top_direction=rule.relative_top_direction,
@@ -82,6 +84,7 @@ def table_rows_from_field_rules(field_rules: Sequence[FieldRule]) -> list[FieldR
 def _field_rule_from_table_row(row: FieldRuleRow, row_number: int) -> FieldRule:
     note_type = row.note_type.strip()
     field = row.field.strip()
+    scope_query = row.scope_query.strip()
     filter_query = row.filter_query.strip()
     field_value_mode = row.field_value_mode.strip()
     relative_top_direction = row.relative_top_direction.strip()
@@ -138,6 +141,7 @@ def _field_rule_from_table_row(row: FieldRuleRow, row_number: int) -> FieldRule:
     return FieldRule(
         note_type=note_type,
         field=field,
+        scope_query=scope_query,
         filter_query=filter_query,
         field_value_mode=field_value_mode,
         relative_top_direction=relative_top_direction,

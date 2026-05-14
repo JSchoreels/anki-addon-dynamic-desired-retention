@@ -524,7 +524,7 @@ def test_relative_numeric_field_rule_uses_filter_for_population() -> None:
             FieldRule(
                 note_type="Japanese",
                 field="Frequency",
-                filter_query="deck:Filtered",
+                scope_query="deck:Filtered",
                 field_value_mode="relative",
                 value_type="number",
                 thresholds=[FieldThreshold("40", 0.9)],
@@ -612,14 +612,14 @@ def test_numeric_field_rule_clamps_below_lowest_threshold() -> None:
     assert desired_retention == 0.9
 
 
-def test_field_rule_extra_filter_must_match_card() -> None:
+def test_field_rule_scope_filter_must_match_card() -> None:
     matcher = DesiredRetentionMatcher(
         [],
         [
             FieldRule(
                 note_type="Japanese",
                 field="Priority",
-                filter_query="deck:Filtered",
+                scope_query="deck:Filtered",
                 value_type="text",
                 thresholds=[FieldThreshold("High", 0.95)],
             )
@@ -636,14 +636,14 @@ def test_field_rule_extra_filter_must_match_card() -> None:
     assert desired_retention == 0.7
 
 
-def test_field_rule_extra_filter_allows_matching_card() -> None:
+def test_field_rule_scope_filter_allows_matching_card() -> None:
     matcher = DesiredRetentionMatcher(
         [],
         [
             FieldRule(
                 note_type="Japanese",
                 field="Priority",
-                filter_query="deck:Filtered",
+                scope_query="deck:Filtered",
                 value_type="text",
                 thresholds=[FieldThreshold("High", 0.95)],
             )
@@ -658,3 +658,27 @@ def test_field_rule_extra_filter_allows_matching_card() -> None:
     )
 
     assert desired_retention == 0.95
+
+
+def test_field_rule_exclusion_filter_skips_matching_card() -> None:
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Priority",
+                filter_query="tag:excluded",
+                value_type="text",
+                thresholds=[FieldThreshold("High", 0.95)],
+            )
+        ],
+        logging.getLogger("test"),
+    )
+
+    desired_retention = matcher.desired_retention_for_card(
+        collection=FakeCollection({"tag:excluded AND cid:123"}),
+        card=FakeCard(fields={"Priority": "High"}),
+        current_desired_retention=0.7,
+    )
+
+    assert desired_retention == 0.7

@@ -7,18 +7,22 @@ from typing import Any
 
 from aqt.qt import (
     QAbstractItemView,
+    QBrush,
     QCheckBox,
+    QColor,
     QComboBox,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QPalette,
     QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
     Qt,
+    QTimer,
     QVBoxLayout,
     QWidget,
     qconnect,
@@ -36,6 +40,7 @@ from .field_rule_table import (
 from .field_rules import FieldRule
 from .rule_table import RuleTableError, normalize_table_desired_retention
 from .threshold_slider import ThresholdSlider
+from .workload import SliceWorkload, field_rule_slice_workloads
 
 
 class FieldRulesEditor(QWidget):
@@ -53,6 +58,12 @@ class FieldRulesEditor(QWidget):
         self._selected_field_rule_index = -1
         self._normalizing_threshold_item = False
         self._loading_editor = False
+        self._workload_timer = QTimer(self)
+        self._workload_timer.setSingleShot(True)
+        self._workload_generation = 0
+        self._workload_running = False
+        self._pending_workload_row: FieldRuleRow | None = None
+        self._workload_cache: dict[tuple[object, ...], list[SliceWorkload]] = {}
 
         root_layout = QVBoxLayout(self)
         self._build_layout(root_layout)
@@ -77,12 +88,13 @@ class FieldRulesEditor(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         root_layout.addWidget(splitter)
 
-        self._field_rules_table = QTableWidget(0, 9)
+        self._field_rules_table = QTableWidget(0, 10)
         self._field_rules_table.setHorizontalHeaderLabels(
             [
                 "Note type",
                 "Field",
-                "Filter",
+                "Scope",
+                "Exclusion",
                 "Mode",
                 "Higher DR for",
                 "Type",
@@ -106,6 +118,9 @@ class FieldRulesEditor(QWidget):
         self._field_rules_table.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.Stretch
         )
+        self._field_rules_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
+        )
         splitter.addWidget(self._field_rules_table)
 
         editor = QWidget()
@@ -123,6 +138,7 @@ class FieldRulesEditor(QWidget):
         self._note_type_combo.setEditable(True)
         self._field_combo = QComboBox()
         self._field_combo.setEditable(True)
+        self._scope_query_edit = QLineEdit()
         self._filter_query_edit = QLineEdit()
         self._field_value_mode_combo = QComboBox()
         self._field_value_mode_combo.addItem("Absolute", "absolute")
@@ -135,6 +151,7 @@ class FieldRulesEditor(QWidget):
         self._linear_between_checkbox = QCheckBox("Linear DR between thresholds")
         form_layout.addRow("Note type", self._note_type_combo)
         form_layout.addRow("Field", self._field_combo)
+        form_layout.addRow("Scope Filter", self._scope_query_edit)
         form_layout.addRow("Exclusion (Search query)", self._filter_query_edit)
         form_layout.addRow("Field value mode", self._field_value_mode_combo)
         form_layout.addRow("Higher DR for", self._relative_top_direction_combo)
@@ -152,9 +169,14 @@ class FieldRulesEditor(QWidget):
         threshold_controls.addWidget(self._remove_threshold_button)
         editor_layout.addLayout(threshold_controls)
 
-        self._threshold_table = QTableWidget(0, 3)
+        self._threshold_table = QTableWidget(0, 4)
         self._threshold_table.setHorizontalHeaderLabels(
-            [_threshold_value_header(""), "Desired retention (%)", "Error"]
+            [
+                _threshold_value_header(""),
+                "Desired retention (%)",
+                "Workload (review/day)",
+                "Workload Ratio",
+            ]
         )
         self._threshold_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
@@ -171,7 +193,18 @@ class FieldRulesEditor(QWidget):
         self._threshold_table.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.ResizeMode.Stretch
         )
+        self._threshold_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.ResizeToContents
+        )
         editor_layout.addWidget(self._threshold_table)
+
+        workload_summary = QHBoxLayout()
+        self._total_workload_label = QLabel("Total Workload: -")
+        self._expected_retention_label = QLabel("Expected Retention: -")
+        workload_summary.addWidget(self._total_workload_label)
+        workload_summary.addWidget(self._expected_retention_label)
+        workload_summary.addStretch(1)
+        editor_layout.addLayout(workload_summary)
 
         self._threshold_slider = ThresholdSlider(
             on_selected_changed=self._select_threshold_row,
@@ -190,6 +223,7 @@ class FieldRulesEditor(QWidget):
         )
         qconnect(self._note_type_combo.currentTextChanged, self._note_type_changed)
         qconnect(self._field_combo.currentTextChanged, self._update_current_field_rule)
+        qconnect(self._scope_query_edit.textChanged, self._update_current_field_rule)
         qconnect(self._filter_query_edit.textChanged, self._update_current_field_rule)
         qconnect(
             self._field_value_mode_combo.currentIndexChanged,
@@ -211,6 +245,7 @@ class FieldRulesEditor(QWidget):
             self._threshold_table.currentCellChanged,
             self._threshold_selection_changed,
         )
+        qconnect(self._workload_timer.timeout, self._start_pending_threshold_workload)
 
     def _load_field_rules(self) -> None:
         self._field_rules_table.setRowCount(0)
@@ -231,6 +266,7 @@ class FieldRulesEditor(QWidget):
         values = [
             row.note_type,
             row.field,
+            row.scope_query,
             row.filter_query,
             row.field_value_mode.title(),
             (
@@ -256,6 +292,7 @@ class FieldRulesEditor(QWidget):
         row = FieldRuleRow(
             note_type=note_type,
             field=fields[0] if fields else "",
+            scope_query="",
             filter_query="",
             field_value_mode="absolute",
             relative_top_direction="lower",
@@ -320,6 +357,7 @@ class FieldRulesEditor(QWidget):
         try:
             self._populate_note_type_combo("")
             self._field_combo.clear()
+            self._scope_query_edit.clear()
             self._filter_query_edit.clear()
             self._set_field_value_mode("absolute")
             self._set_relative_top_direction("lower")
@@ -334,6 +372,7 @@ class FieldRulesEditor(QWidget):
             self._populate_note_type_combo(row.note_type)
             self._populate_field_combo(row.note_type, row.field)
             self._set_threshold_field_header(row.field)
+            self._scope_query_edit.setText(row.scope_query)
             self._filter_query_edit.setText(row.filter_query)
             self._value_type_combo.setCurrentText(row.value_type)
             self._set_field_value_mode(row.field_value_mode)
@@ -344,6 +383,7 @@ class FieldRulesEditor(QWidget):
         finally:
             self._loading_editor = False
             self._refresh_threshold_slider()
+            self._refresh_threshold_workload()
 
     def _populate_note_type_combo(self, selected: str) -> None:
         self._note_type_combo.clear()
@@ -379,9 +419,8 @@ class FieldRulesEditor(QWidget):
             self._threshold_table.setItem(
                 row, 1, QTableWidgetItem(threshold.desired_retention_percent)
             )
-            error_item = QTableWidgetItem("")
-            error_item.setFlags(error_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self._threshold_table.setItem(row, 2, error_item)
+            self._set_read_only_threshold_item(row, 2, "")
+            self._set_read_only_threshold_item(row, 3, "")
         if thresholds:
             self._threshold_table.setCurrentCell(0, 0)
         self._refresh_threshold_errors()
@@ -458,6 +497,7 @@ class FieldRulesEditor(QWidget):
         row = FieldRuleRow(
             note_type=self._note_type_combo.currentText(),
             field=self._field_combo.currentText(),
+            scope_query=self._scope_query_edit.text(),
             filter_query=self._filter_query_edit.text(),
             field_value_mode=self._field_value_mode(),
             relative_top_direction=self._relative_top_direction(),
@@ -468,6 +508,7 @@ class FieldRulesEditor(QWidget):
         self._field_rule_rows[index] = row
         self._set_field_rule_summary(index, row)
         self._refresh_threshold_slider()
+        self._refresh_threshold_workload(row)
 
     def _add_threshold(self) -> None:
         row = self._first_minimum_retention_row()
@@ -476,6 +517,8 @@ class FieldRulesEditor(QWidget):
         self._threshold_table.insertRow(row)
         self._threshold_table.setItem(row, 0, QTableWidgetItem(""))
         self._threshold_table.setItem(row, 1, QTableWidgetItem("90"))
+        self._set_read_only_threshold_item(row, 2, "")
+        self._set_read_only_threshold_item(row, 3, "")
         self._threshold_table.setCurrentCell(row, 0)
         self._update_current_field_rule()
 
@@ -507,7 +550,7 @@ class FieldRulesEditor(QWidget):
         row = item.row()
         column = item.column()
         text = item.text()
-        if column == 2:
+        if column not in (0, 1):
             return
 
         if column == 0:
@@ -589,7 +632,12 @@ class FieldRulesEditor(QWidget):
 
     def _set_threshold_field_header(self, field_name: str) -> None:
         self._threshold_table.setHorizontalHeaderLabels(
-            [_threshold_value_header(field_name), "Desired retention (%)", "Error"]
+            [
+                _threshold_value_header(field_name),
+                "Desired retention (%)",
+                "Workload (review/day)",
+                "Workload Ratio",
+            ]
         )
 
     def _selected_field_rule(self) -> FieldRuleRow:
@@ -600,7 +648,8 @@ class FieldRulesEditor(QWidget):
         return FieldRuleRow(
             note_type="",
             field="",
-            filter_query="",
+            scope_query=self._scope_query_edit.text(),
+            filter_query=self._filter_query_edit.text(),
             value_type=self._value_type_combo.currentText(),
             linear_between_thresholds=False,
             thresholds=[],
@@ -629,9 +678,8 @@ class FieldRulesEditor(QWidget):
         self._threshold_table.insertRow(row)
         self._threshold_table.setItem(row, 0, self._minimum_retention_item())
         self._threshold_table.setItem(row, 1, QTableWidgetItem("50"))
-        error_item = QTableWidgetItem("")
-        error_item.setFlags(error_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._threshold_table.setItem(row, 2, error_item)
+        self._set_read_only_threshold_item(row, 2, "")
+        self._set_read_only_threshold_item(row, 3, "")
 
     def _sort_threshold_table(self) -> None:
         sorted_rows = _sorted_threshold_rows(
@@ -663,14 +711,140 @@ class FieldRulesEditor(QWidget):
         self._normalizing_threshold_item = True
         try:
             for row in range(self._threshold_table.rowCount()):
-                item = self._threshold_table.item(row, 2)
-                if item is None:
-                    item = QTableWidgetItem("")
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    self._threshold_table.setItem(row, 2, item)
-                item.setText(errors.get(row, ""))
+                message = errors.get(row, "")
+                brush = _threshold_error_brush(self.palette()) if message else QBrush()
+                for column in range(self._threshold_table.columnCount()):
+                    item = self._threshold_table.item(row, column)
+                    if item is None:
+                        item = QTableWidgetItem("")
+                        if column >= 2:
+                            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                        self._threshold_table.setItem(row, column, item)
+                    item.setBackground(brush)
+                    item.setToolTip(message)
         finally:
             self._normalizing_threshold_item = False
+
+    def _refresh_threshold_workload(self, row: FieldRuleRow | None = None) -> None:
+        if self._loading_editor:
+            return
+
+        if row is None:
+            row = self._selected_field_rule()
+
+        row = _copy_field_rule_row(row)
+        self._workload_generation += 1
+        signature = _workload_signature(row)
+        cached_workloads = self._workload_cache.get(signature)
+        if cached_workloads is not None:
+            self._pending_workload_row = None
+            self._workload_timer.stop()
+            self._apply_threshold_workloads(cached_workloads)
+            return
+
+        self._pending_workload_row = row
+        self._show_threshold_workload_pending()
+        self._workload_timer.start(250)
+
+    def _start_pending_threshold_workload(self) -> None:
+        if self._workload_running or self._pending_workload_row is None:
+            return
+
+        row = self._pending_workload_row
+        self._pending_workload_row = None
+        generation = self._workload_generation
+        signature = _workload_signature(row)
+        self._workload_running = True
+
+        try:
+            from aqt.operations import QueryOp
+        except Exception:
+            self._logger.exception("failed to import Anki QueryOp for workload")
+            self._workload_running = False
+            self._apply_threshold_workloads([])
+            return
+
+        def compute_workload(collection: Any) -> list[SliceWorkload]:
+            return field_rule_slice_workloads(collection, row, self._logger)
+
+        QueryOp(
+            parent=self,
+            op=compute_workload,
+            success=lambda workloads: self._workload_finished(
+                generation, signature, workloads
+            ),
+        ).failure(
+            lambda exc: self._workload_failed(generation, exc)
+        ).run_in_background()
+
+    def _workload_finished(
+        self,
+        generation: int,
+        signature: tuple[object, ...],
+        workloads: list[SliceWorkload],
+    ) -> None:
+        self._workload_running = False
+        self._workload_cache[signature] = workloads
+        if len(self._workload_cache) > 32:
+            self._workload_cache.pop(next(iter(self._workload_cache)))
+        if generation == self._workload_generation:
+            self._apply_threshold_workloads(workloads)
+        if self._pending_workload_row is not None:
+            self._workload_timer.start(0)
+
+    def _workload_failed(self, generation: int, exc: Exception) -> None:
+        self._workload_running = False
+        self._logger.error(
+            "failed to compute field rule workload",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        if generation == self._workload_generation:
+            self._apply_threshold_workloads([])
+        if self._pending_workload_row is not None:
+            self._workload_timer.start(0)
+
+    def _show_threshold_workload_pending(self) -> None:
+        self._normalizing_threshold_item = True
+        try:
+            for table_row in range(self._threshold_table.rowCount()):
+                self._set_read_only_threshold_item(table_row, 2, "...")
+                self._set_read_only_threshold_item(table_row, 3, "...")
+            self._total_workload_label.setText("Total Workload: ... (Current: ...)")
+            self._expected_retention_label.setText("Expected Retention: ...")
+        finally:
+            self._normalizing_threshold_item = False
+        self._refresh_threshold_errors()
+
+    def _apply_threshold_workloads(self, workloads: list[SliceWorkload]) -> None:
+        self._normalizing_threshold_item = True
+        try:
+            for table_row in range(self._threshold_table.rowCount()):
+                workload = (
+                    workloads[table_row]
+                    if table_row < len(workloads)
+                    else SliceWorkload(0, 0, 0)
+                )
+                self._set_read_only_threshold_item(
+                    table_row, 2, _format_workload(workload.workload)
+                )
+                self._set_read_only_threshold_item(
+                    table_row, 3, _format_workload_ratio(workload.ratio)
+                )
+            self._set_workload_summary(workloads)
+        finally:
+            self._normalizing_threshold_item = False
+        self._refresh_threshold_errors()
+
+    def _set_workload_summary(self, workloads: list[SliceWorkload]) -> None:
+        total_workload = sum(workload.workload for workload in workloads)
+        current_workload = sum(workload.current_workload for workload in workloads)
+        expected_retention = _expected_retention(workloads)
+        self._total_workload_label.setText(
+            _format_total_workload_summary(total_workload, current_workload)
+        )
+        self._expected_retention_label.setText(
+            f"Expected Retention: {_format_expected_retention(expected_retention)}"
+        )
 
     def _convert_threshold_value_mode(self, old_mode: str, new_mode: str) -> None:
         if old_mode == new_mode or self._value_type_combo.currentText() != "number":
@@ -680,6 +854,7 @@ class FieldRulesEditor(QWidget):
             self._collection,
             self._note_type_combo.currentText(),
             self._field_combo.currentText(),
+            self._scope_query_edit.text(),
             self._filter_query_edit.text(),
             self._logger,
         )
@@ -714,6 +889,14 @@ class FieldRulesEditor(QWidget):
         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         return item
 
+    def _set_read_only_threshold_item(self, row: int, column: int, text: str) -> None:
+        item = self._threshold_table.item(row, column)
+        if item is None:
+            item = QTableWidgetItem("")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._threshold_table.setItem(row, column, item)
+        item.setText(text)
+
     def _normalize_minimum_retention_row(self, row: int) -> None:
         rows = self._threshold_rows()
         if row < 0 or row >= len(rows):
@@ -727,6 +910,7 @@ class FieldRulesEditor(QWidget):
             FieldRuleRow(
                 note_type="",
                 field="",
+                scope_query="",
                 filter_query="",
                 field_value_mode=self._field_value_mode(),
                 relative_top_direction=self._relative_top_direction(),
@@ -751,12 +935,46 @@ def _with_required_minimum_retention(row: FieldRuleRow) -> FieldRuleRow:
     return FieldRuleRow(
         note_type=row.note_type,
         field=row.field,
+        scope_query=row.scope_query,
         filter_query=row.filter_query,
         field_value_mode=row.field_value_mode,
         relative_top_direction=row.relative_top_direction,
         value_type=row.value_type,
         linear_between_thresholds=row.linear_between_thresholds,
         thresholds=_editor_threshold_rows(row),
+    )
+
+
+def _copy_field_rule_row(row: FieldRuleRow) -> FieldRuleRow:
+    return FieldRuleRow(
+        note_type=row.note_type,
+        field=row.field,
+        scope_query=row.scope_query,
+        filter_query=row.filter_query,
+        field_value_mode=row.field_value_mode,
+        relative_top_direction=row.relative_top_direction,
+        value_type=row.value_type,
+        linear_between_thresholds=row.linear_between_thresholds,
+        thresholds=list(row.thresholds),
+        minimum_desired_retention_percent=row.minimum_desired_retention_percent,
+    )
+
+
+def _workload_signature(row: FieldRuleRow) -> tuple[object, ...]:
+    return (
+        row.note_type,
+        row.field,
+        row.scope_query,
+        row.filter_query,
+        row.field_value_mode,
+        row.relative_top_direction,
+        row.value_type,
+        row.linear_between_thresholds,
+        row.minimum_desired_retention_percent,
+        tuple(
+            (threshold.value, threshold.desired_retention_percent)
+            for threshold in row.thresholds
+        ),
     )
 
 
@@ -996,6 +1214,7 @@ def _numeric_field_population(
     collection: Any,
     note_type: str,
     field: str,
+    scope_query: str,
     filter_query: str,
     logger: Logger,
 ) -> list[float]:
@@ -1003,8 +1222,10 @@ def _numeric_field_population(
         return []
 
     query_nodes = [_note_type_query(note_type)]
+    if scope_query.strip():
+        query_nodes.insert(0, scope_query.strip())
     if filter_query.strip():
-        query_nodes.insert(0, filter_query.strip())
+        query_nodes.append(_negated_query(filter_query.strip()))
 
     try:
         search = collection.build_search_string(*query_nodes)
@@ -1034,6 +1255,10 @@ def _note_type_query(note_type: str) -> str:
     return f'note:"{escaped}"'
 
 
+def _negated_query(query: str) -> str:
+    return f"-({query})"
+
+
 def _note_identity(note: object) -> tuple[str, int]:
     note_id = getattr(note, "id", None)
     if isinstance(note_id, int):
@@ -1046,6 +1271,53 @@ def _threshold_value_header(field_name: str) -> str:
     if not normalized_field_name:
         return "Field value"
     return f"Field: {normalized_field_name}"
+
+
+def _threshold_error_brush(palette: QPalette) -> QBrush:
+    base_color = palette.color(QPalette.ColorRole.Base)
+    error_color = QColor("#5f2120") if base_color.lightness() < 128 else QColor("#f8d7da")
+    return QBrush(error_color)
+
+
+def _format_workload(workload: float) -> str:
+    if workload <= 0:
+        return ""
+    return str(_round_half_up(workload))
+
+
+def _format_workload_with_unit(workload: float) -> str:
+    formatted_workload = _format_workload(workload)
+    if not formatted_workload:
+        return "-"
+    return f"{formatted_workload} review/day"
+
+
+def _format_total_workload_summary(total_workload: float, current_workload: float) -> str:
+    return (
+        f"Total Workload: {_format_workload_with_unit(total_workload)} "
+        f"(Current: {_format_workload_with_unit(current_workload)})"
+    )
+
+
+def _format_workload_ratio(ratio: float) -> str:
+    if ratio <= 0:
+        return ""
+    return f"{_round_half_up(ratio * 100)}%"
+
+
+def _expected_retention(workloads: list[SliceWorkload]) -> float | None:
+    total_workload = sum(workload.workload for workload in workloads)
+    if total_workload <= 0:
+        return None
+
+    retention_workload = sum(workload.retention_workload for workload in workloads)
+    return retention_workload / total_workload
+
+
+def _format_expected_retention(expected_retention: float | None) -> str:
+    if expected_retention is None:
+        return "-"
+    return f"{_round_half_up(expected_retention * 100)}%"
 
 
 def _note_type_fields(collection: Any, logger: Logger) -> dict[str, list[str]]:

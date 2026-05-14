@@ -80,7 +80,12 @@ class DesiredRetentionMatcher:
         rule: FieldRule,
         index: int,
     ) -> float | None:
-        if rule.filter_query and not self._matches_field_rule_filter(
+        if rule.scope_query and not self._matches_field_rule_scope(
+            collection, card.id, rule, index
+        ):
+            return None
+
+        if rule.filter_query and self._matches_field_rule_exclusion(
             collection, card.id, rule, index
         ):
             return None
@@ -127,7 +132,23 @@ class DesiredRetentionMatcher:
             collection, field_value, rule, index, card.id
         )
 
-    def _matches_field_rule_filter(
+    def _matches_field_rule_scope(
+        self,
+        collection: SearchCollection,
+        card_id: int,
+        rule: FieldRule,
+        index: int,
+    ) -> bool:
+        try:
+            search = collection.build_search_string(rule.scope_query, f"cid:{card_id}")
+            return bool(collection.find_cards(search, order=False))
+        except Exception:
+            self._logger.exception(
+                "field rule %s scope search failed: %s", index, rule.scope_query
+            )
+            return False
+
+    def _matches_field_rule_exclusion(
         self,
         collection: SearchCollection,
         card_id: int,
@@ -139,7 +160,7 @@ class DesiredRetentionMatcher:
             return bool(collection.find_cards(search, order=False))
         except Exception:
             self._logger.exception(
-                "field rule %s filter search failed: %s", index, rule.filter_query
+                "field rule %s exclusion search failed: %s", index, rule.filter_query
             )
             return False
 
@@ -218,9 +239,7 @@ class DesiredRetentionMatcher:
         if cache_key in self._relative_population_cache:
             return self._relative_population_cache[cache_key]
 
-        query_nodes = [_note_type_query(rule.note_type)]
-        if rule.filter_query:
-            query_nodes.insert(0, rule.filter_query)
+        query_nodes = _field_rule_population_query_nodes(rule)
 
         try:
             search = collection.build_search_string(*query_nodes)
@@ -287,6 +306,19 @@ def _note_field_value(note: object, field_name: str) -> str | None:
 def _note_type_query(note_type: str) -> str:
     escaped = note_type.replace('"', r'\"')
     return f'note:"{escaped}"'
+
+
+def _field_rule_population_query_nodes(rule: FieldRule) -> list[str]:
+    query_nodes = [_note_type_query(rule.note_type)]
+    if rule.scope_query:
+        query_nodes.insert(0, rule.scope_query)
+    if rule.filter_query:
+        query_nodes.append(_negated_query(rule.filter_query))
+    return query_nodes
+
+
+def _negated_query(query: str) -> str:
+    return f"-({query})"
 
 
 def _numeric_field_values_for_cards(

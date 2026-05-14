@@ -70,6 +70,7 @@ def test_load_field_rules_accepts_text_and_number_rules() -> None:
                 {
                     "note_type": "Japanese",
                     "field": "Frequency",
+                    "scope_query": "deck:Japanese",
                     "filter_query": "deck:Japanese",
                     "field_value_mode": "relative",
                     "relative_top_direction": "lower",
@@ -98,6 +99,7 @@ def test_load_field_rules_accepts_text_and_number_rules() -> None:
         FieldRule(
             note_type="Japanese",
             field="Frequency",
+            scope_query="deck:Japanese",
             filter_query="deck:Japanese",
             field_value_mode="relative",
             relative_top_direction="lower",
@@ -209,6 +211,7 @@ def test_config_from_rules_can_include_field_rules() -> None:
             {
                 "note_type": "Japanese",
                 "field": "Frequency",
+                "scope_query": "",
                 "filter_query": "deck:Japanese",
                 "field_value_mode": "absolute",
                 "relative_top_direction": "lower",

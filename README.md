@@ -21,6 +21,8 @@ Configure rules in Anki's add-on config:
     {
       "note_type": "Japanese",
       "field": "Frequency",
+      "scope_query": "deck:Japanese",
+      "filter_query": "tag:excluded",
       "field_value_mode": "absolute",
       "relative_top_direction": "lower",
       "value_type": "number",
@@ -45,7 +47,7 @@ The first matching rule wins. If no rule matches, Anki keeps the deck/preset
 desired retention.
 
 You can edit search rules and field rules from
-`Tools > Dynamic Desired Retention Table`.
+`Tools > FSRS Dynamic Desired Retention Table`.
 In the editor, `90`, `90%`, and `0.90` all mean 90%.
 The editor displays those values as `90`.
 When editing JSON directly, use decimal values: `0.9` means 90%.
@@ -56,6 +58,19 @@ relative percentile thresholds such as `Top 10%`. Numeric field rules include a
 field values can receive the higher desired retention. The editor keeps numeric
 thresholds sorted, validates desired-retention order, and always includes a
 `Minimum Retention` row for values beyond the least-important threshold.
+`Scope Filter` limits the cards a field rule can apply to, while
+`Exclusion (Search query)` skips matching cards.
+Conflicting threshold rows are highlighted in the editor. The threshold table
+also estimates each slice's workload by summing `1 / interval` for matching
+cards with FSRS stability, using Anki's FSRS interval calculation for each
+card's desired retention, then rounding the projected interval and capping it at
+the card deck's maximum interval. The editor displays workload as rounded
+`review/day` values, shows each slice's share as `Workload Ratio`, plus `Total
+Workload` with the same-population current workload in parentheses and
+workload-weighted `Expected Retention` below the threshold table. The current
+workload uses the cards' stored current intervals, which makes it easier to
+compare the rule scope with Anki's stats. Workload estimates run in the
+background; the table shows `...` while they are being refreshed.
 
 Relative percentile rules are computed from the current collection at review
 time and cached per field rule while the add-on is loaded, so bulk rescheduling
