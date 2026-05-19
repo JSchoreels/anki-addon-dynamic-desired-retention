@@ -6,8 +6,8 @@ dynamic desired-retention reviewer hook, such as
 will not work on standard Anki builds that do not provide that hook.**
 
 Dynamic Desired Retention lets you use different FSRS desired retention targets
-for different cards, based on normal Anki search queries or note-field
-thresholds.
+for different cards, based on normal Anki search queries, note-field thresholds,
+or the answer button used during review.
 
 For example, you can keep your default deck/preset desired retention, while
 using a higher target for high-priority cards.
@@ -18,6 +18,8 @@ Example rules:
 - `tag:exam` -> `95%`
 - note field `Frequency`, absolute threshold `1000` -> `90%`
 - note field `Frequency`, relative threshold `Top 10%` -> `90%`
+- `Again`, absolute grade rule -> `90%`
+- `Easy`, relative grade rule `-20%` from a `60%` review -> `48%`
 
 Rules are ordered. The first matching rule is used. If no rule matches, Anki
 uses the deck/preset desired retention as usual.
@@ -25,13 +27,14 @@ uses the deck/preset desired retention as usual.
 ## Requirements
 
 This add-on requires a recent Anki build that supports dynamic desired
-retention during review.
+retention during review. Grade rules require a build with
+`gui_hooks.reviewer_will_update_scheduling_states`.
 
 ## How To Use
 
 1. Open `Tools > FSRS Dynamic Desired Retention Table`.
-2. Add one row per search rule, or open the field-rule tab and select a note
-   type plus field.
+2. Add one row per search rule, open the field-rule tab and select a note type
+   plus field, or open the grade-rule tab.
 3. For search rules, enter an Anki search query in the first column.
 4. For field rules, optionally set a `Scope Filter` to limit the cards checked
    by the rule, and an `Exclusion` query to skip matching cards.
@@ -41,6 +44,15 @@ retention during review.
    values should receive the higher desired retention.
 7. Enter desired retention as a percent, such as `90`.
 8. Save.
+
+## Grade Rules
+
+Grade rules are disabled by default. Each answer button can be set to:
+
+- `Disabled`, which leaves the review desired retention unchanged.
+- `Absolute`, which replaces the review desired retention with a fixed target.
+- `Relative`, which moves from the current review desired retention toward 100%
+  for positive values and toward 0% for negative values.
 
 ## Field Rules
 

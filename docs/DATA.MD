@@ -48,6 +48,18 @@ Expected config shape:
         }
       ]
     }
+  ],
+  "grade_rules": [
+    {
+      "grade": "again",
+      "mode": "absolute",
+      "value": 0.9
+    },
+    {
+      "grade": "easy",
+      "mode": "relative",
+      "value": -0.2
+    }
   ]
 }
 ```
@@ -111,14 +123,25 @@ editor highlights conflicting rows when desired retention increases in the wrong
 direction or when `Minimum Retention` is higher than the least-important
 threshold. Saving applies the same validation.
 
-Invalid search rules and field rules are not used. The add-on logs a warning
-with the rule index so the config can be fixed without changing scheduler
-behavior for unrelated cards.
+Invalid search rules, field rules and grade rules are not used. The add-on logs
+a warning with the rule index so the config can be fixed without changing
+scheduler behavior for unrelated cards.
+
+Grade rules are disabled by default. The config stores only enabled grade rules
+in `grade_rules`; an empty or missing list leaves the desired retention selected
+by search rules, field rules, or Anki unchanged. Each rule targets one answer
+button grade: `again`, `hard`, `good`, or `easy`. `mode: "absolute"` replaces
+the review desired retention with `value`, where `0.9` means 90%. `mode:
+"relative"` moves from the current review desired retention toward 100% for
+positive values and toward 0% for negative values. For example, when the current
+review desired retention is 60%, relative `0.8` resolves to 92%, and relative
+`-0.2` resolves to 48%. Relative values must be greater than -100% and at most
+100%, because Anki desired retention cannot be 0%.
 
 ## Add-on Config Update
 
 `Tools > FSRS Dynamic Desired Retention Table` opens an editor with separate tabs for
-ordered search rules and field rules.
+ordered search rules, field rules and grade rules.
 
 The table accepts desired retention as a percentage or as Anki's scheduler
 decimal. On save, the add-on writes the config through
@@ -129,9 +152,17 @@ as `0.9`.
 The table normalizes valid desired-retention inputs to percentage display text.
 For example, `0.90` is converted to `90` in the table.
 
-Saving replaces the full `rules` and `field_rules` lists with the rows currently
-in the editor. The add-on reloads its in-memory rules immediately after writing
+Saving replaces the full `rules`, `field_rules` and `grade_rules` lists with the
+rows currently in the editor. Disabled grade rows are not written to
+`grade_rules`. The add-on reloads its in-memory rules immediately after writing
 the config.
+
+The grade-rule editor shows one fixed row for each answer button. `Disabled`
+keeps that grade inactive and ignores the value cell. `Absolute` accepts a
+desired retention percentage and stores it as Anki's scheduler decimal.
+`Relative` accepts a signed percentage and stores it as a decimal movement, so
+`80`, `80%`, and `0.8` are written as `0.8`, while `-20`, `-20%`, and `-0.2`
+are written as `-0.2`.
 
 The field-rule editor reads available note types and fields from the current
 collection. Field-rule threshold desired retention, including the special
@@ -232,6 +263,33 @@ alive, then binary searched for each reviewed card. This keeps bulk rescheduling
 from re-reading the same comparison population for every card. The cache is
 rebuilt when the add-on config reloads. This is also read-only collection
 access.
+
+## Current Answer State Update
+
+During review, Anki builds answer-button scheduling states before rendering the
+button intervals. Grade rules use
+`gui_hooks.reviewer_will_update_scheduling_states` to update those in-memory
+states before the reviewer asks Anki to describe the next states. The add-on
+does not create, update, or delete card data at this point; the selected state
+is persisted later by Anki's normal answer flow.
+
+Before updating answer states, the add-on resolves the base desired retention
+from search rules and field rules. If an answer grade has an enabled absolute
+grade rule, that absolute value is used for that grade's scheduling state. If an
+answer grade has an enabled relative grade rule, the add-on adjusts the resolved
+base value with this formula:
+
+```text
+positive relative: base + value * (1 - base)
+negative relative: base + value * base
+```
+
+The adjusted desired retention is converted to a scheduled interval with Anki's
+FSRS interval API and written to the matching grade state, such as `again`,
+`hard`, `good`, or `easy`. This makes the answer-button label and the state
+Anki persists agree. If no base desired retention is available, a relative grade
+rule is skipped and the add-on logs that skip at debug level. Absolute grade
+rules do not need a base desired retention.
 
 ## External Resolver Read
 

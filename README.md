@@ -1,11 +1,12 @@
 # Dynamic Desired Retention
 
 Anki add-on for overriding FSRS desired retention during review with ordered
-Anki search rules and note-field threshold rules.
+Anki search rules, note-field threshold rules and answer-button grade rules.
 
 This add-on targets Anki builds that expose
-`gui_hooks.reviewer_will_compute_desired_retention`. It does not patch reviewer
-or scheduler internals.
+`gui_hooks.reviewer_will_compute_desired_retention`. Grade rules additionally
+require `gui_hooks.reviewer_will_update_scheduling_states`, so they can adjust
+per-button scheduling states before answer button intervals are rendered.
 
 Configure rules in Anki's add-on config:
 
@@ -39,14 +40,15 @@ Configure rules in Anki's add-on config:
         }
       ]
     }
-  ]
+  ],
+  "grade_rules": []
 }
 ```
 
 The first matching rule wins. If no rule matches, Anki keeps the deck/preset
 desired retention.
 
-You can edit search rules and field rules from
+You can edit search rules, field rules and grade rules from
 `Tools > FSRS Dynamic Desired Retention Table`.
 In the editor, `90`, `90%`, and `0.90` all mean 90%.
 The editor displays those values as `90`.
@@ -75,3 +77,8 @@ background; the table shows `...` while they are being refreshed.
 Relative percentile rules are computed from the current collection at review
 time and cached per field rule while the add-on is loaded, so bulk rescheduling
 does not repeatedly scan the same comparison population.
+
+Grade rules are disabled by default. In the `Grade Rules` tab, each answer
+button can be left disabled, set to an absolute desired retention, or set to a
+relative signed percentage. Positive relative values move from the current
+review desired retention toward 100%; negative values move toward 0%.

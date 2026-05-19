@@ -20,9 +20,11 @@ from aqt.qt import (
     qconnect,
 )
 
-from .config import FieldRule, Rule, config_from_rules
+from .config import FieldRule, GradeRule, Rule, config_from_rules
 from .field_rule_table import FieldRuleTableError, field_rules_from_table_rows
 from .field_rules_editor import FieldRulesEditor
+from .grade_rule_table import GradeRuleTableError, grade_rules_from_table_rows
+from .grade_rules_editor import GradeRulesEditor
 from .rule_table import (
     RuleTableError,
     normalize_table_desired_retention,
@@ -40,6 +42,7 @@ class RulesTableDialog(QDialog):
         module: str,
         rules: list[Rule],
         field_rules: list[FieldRule],
+        grade_rules: list[GradeRule],
         collection: Any,
         logger: Logger,
         on_saved: Callable[[], None],
@@ -69,6 +72,9 @@ class RulesTableDialog(QDialog):
             logger=logger,
         )
         self._tabs.addTab(self._field_rules_editor, "Field Rules")
+
+        self._grade_rules_editor = GradeRulesEditor(grade_rules=grade_rules)
+        self._tabs.addTab(self._grade_rules_editor, "Grade Rules")
 
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
@@ -184,17 +190,21 @@ class RulesTableDialog(QDialog):
             field_rules = field_rules_from_table_rows(
                 self._field_rules_editor.field_rule_rows()
             )
-        except (RuleTableError, FieldRuleTableError) as exc:
+            grade_rules = grade_rules_from_table_rows(
+                self._grade_rules_editor.grade_rule_rows()
+            )
+        except (RuleTableError, FieldRuleTableError, GradeRuleTableError) as exc:
             QMessageBox.warning(self, "Dynamic Desired Retention", str(exc))
             return
 
         self._addon_manager.writeConfig(
-            self._module, config_from_rules(rules, field_rules)
+            self._module, config_from_rules(rules, field_rules, grade_rules)
         )
         self._logger.info(
-            "saved %s search rules and %s field rules",
+            "saved %s search rules, %s field rules and %s grade rules",
             len(rules),
             len(field_rules),
+            len(grade_rules),
         )
         self._on_saved()
         self.accept()

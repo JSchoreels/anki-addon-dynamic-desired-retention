@@ -22,6 +22,65 @@
         }
       }
     },
+    "grade_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grade", "mode", "value"],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "absolute"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 1
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "relative"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "value": {
+                  "type": "number",
+                  "exclusiveMinimum": -1,
+                  "maximum": 1
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "grade": {
+            "type": "string",
+            "enum": ["again", "hard", "good", "easy"]
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["absolute", "relative"]
+          },
+          "value": {
+            "type": "number"
+          }
+        }
+      }
+    },
     "field_rules": {
       "type": "array",
       "items": {

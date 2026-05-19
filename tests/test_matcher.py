@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from dynamic_desired_retention.config import FieldRule, FieldThreshold, Rule
+from dynamic_desired_retention.config import FieldRule, FieldThreshold, GradeRule, Rule
 from dynamic_desired_retention.matcher import DesiredRetentionMatcher
 
 
@@ -103,6 +103,44 @@ def test_no_match_keeps_incoming_desired_retention() -> None:
     )
 
     assert desired_retention == pytest.approx(0.85)
+
+
+def test_absolute_grade_rule_replaces_matching_rule_retention() -> None:
+    collection = FakeCollection({"note:Japanese AND cid:123"})
+    matcher = DesiredRetentionMatcher(
+        [Rule(query="note:Japanese", desired_retention=0.6)],
+        [],
+        logging.getLogger("test"),
+        grade_rules=[GradeRule("again", "absolute", 0.9)],
+    )
+
+    desired_retention = matcher.desired_retention_for_card(
+        collection=collection,
+        card=FakeCard(),
+        current_desired_retention=None,
+        answer_grade="again",
+    )
+
+    assert desired_retention == 0.9
+
+
+def test_relative_grade_rule_adjusts_matching_rule_retention() -> None:
+    collection = FakeCollection({"note:Japanese AND cid:123"})
+    matcher = DesiredRetentionMatcher(
+        [Rule(query="note:Japanese", desired_retention=0.6)],
+        [],
+        logging.getLogger("test"),
+        grade_rules=[GradeRule("easy", "relative", -0.2)],
+    )
+
+    desired_retention = matcher.desired_retention_for_card(
+        collection=collection,
+        card=FakeCard(),
+        current_desired_retention=None,
+        answer_grade="easy",
+    )
+
+    assert desired_retention == pytest.approx(0.48)
 
 
 def test_search_error_is_non_match(caplog) -> None:

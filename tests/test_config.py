@@ -5,9 +5,11 @@ import logging
 from dynamic_desired_retention.config import (
     FieldRule,
     FieldThreshold,
+    GradeRule,
     Rule,
     config_from_rules,
     load_field_rules,
+    load_grade_rules,
     load_rules,
 )
 
@@ -223,5 +225,38 @@ def test_config_from_rules_can_include_field_rules() -> None:
                     {"value": "2000", "desired_retention": 0.8},
                 ],
             }
+        ],
+    }
+
+
+def test_load_grade_rules_accepts_enabled_grade_rules() -> None:
+    assert load_grade_rules(
+        {
+            "grade_rules": [
+                {"grade": "again", "mode": "absolute", "value": 0.9},
+                {"grade": "easy", "mode": "relative", "value": -0.2},
+            ]
+        },
+        logging.getLogger("test"),
+    ) == [
+        GradeRule(grade="again", mode="absolute", value=0.9),
+        GradeRule(grade="easy", mode="relative", value=-0.2),
+    ]
+
+
+def test_config_from_rules_can_include_grade_rules() -> None:
+    assert config_from_rules(
+        [Rule(query="note:Japanese", desired_retention=0.9)],
+        [],
+        [
+            GradeRule(grade="again", mode="absolute", value=0.9),
+            GradeRule(grade="easy", mode="relative", value=-0.2),
+        ],
+    ) == {
+        "rules": [{"query": "note:Japanese", "desired_retention": 0.9}],
+        "field_rules": [],
+        "grade_rules": [
+            {"grade": "again", "mode": "absolute", "value": 0.9},
+            {"grade": "easy", "mode": "relative", "value": -0.2},
         ],
     }

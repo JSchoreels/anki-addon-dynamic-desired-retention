@@ -5,7 +5,8 @@ from collections.abc import Sequence
 from logging import Logger
 from typing import Protocol
 
-from .config import FieldRule, FieldThreshold, Rule
+from .config import FieldRule, FieldThreshold, GradeRule, Rule
+from .grade_rules import Grade, apply_grade_rule
 
 
 class SearchCollection(Protocol):
@@ -24,14 +25,47 @@ class Card(Protocol):
 
 class DesiredRetentionMatcher:
     def __init__(
-        self, rules: list[Rule], field_rules: list[FieldRule], logger: Logger
+        self,
+        rules: list[Rule],
+        field_rules: list[FieldRule],
+        logger: Logger,
+        grade_rules: list[GradeRule] | None = None,
     ) -> None:
         self._rules = rules
         self._field_rules = field_rules
+        self._grade_rules = grade_rules or []
         self._logger = logger
         self._relative_population_cache: dict[tuple[int, int], list[float] | None] = {}
 
     def desired_retention_for_card(
+        self,
+        *,
+        collection: SearchCollection,
+        card: Card,
+        current_desired_retention: float | None,
+        answer_grade: Grade | None = None,
+    ) -> float | None:
+        desired_retention = self.base_desired_retention_for_card(
+            collection=collection,
+            card=card,
+            current_desired_retention=current_desired_retention,
+        )
+        adjusted_desired_retention = apply_grade_rule(
+            desired_retention=desired_retention,
+            grade=answer_grade,
+            grade_rules=self._grade_rules,
+            logger=self._logger,
+        )
+        if adjusted_desired_retention != desired_retention:
+            self._logger.debug(
+                "grade rule %s adjusted desired retention from %s to %s",
+                answer_grade,
+                desired_retention,
+                adjusted_desired_retention,
+            )
+        return adjusted_desired_retention
+
+    def base_desired_retention_for_card(
         self,
         *,
         collection: SearchCollection,

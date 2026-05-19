@@ -1,13 +1,14 @@
 # Dynamic Desired Retention
 
 Requires an Anki build with `gui_hooks.reviewer_will_compute_desired_retention`.
+Grade rules also require `gui_hooks.reviewer_will_update_scheduling_states`.
 
 Configure ordered search rules in JSON. The first search rule whose Anki search
 query matches the current review card provides the desired retention override.
 If no search rule matches, field rules can read a note field and match configured
 threshold values.
 
-Search rules and field rules can be edited from
+Search rules, field rules and grade rules can be edited from
 `Tools > FSRS Dynamic Desired Retention Table`.
 In the editor, `90`, `90%`, and `0.90` all mean 90%.
 The editor displays those values as `90`.
@@ -45,7 +46,8 @@ Use decimal desired retention values:
         }
       ]
     }
-  ]
+  ],
+  "grade_rules": []
 }
 ```
 
@@ -78,6 +80,30 @@ Numeric threshold desired retention must follow the selected direction: rows
 closer to `Higher DR for` must not have lower desired retention than later rows,
 and `minimum_desired_retention` must not be higher than the least-important
 threshold.
+
+Grade rules are disabled by default. `grade_rules` stores enabled answer-button
+rules only:
+
+```json
+{
+  "grade_rules": [
+    {
+      "grade": "again",
+      "mode": "absolute",
+      "value": 0.9
+    },
+    {
+      "grade": "easy",
+      "mode": "relative",
+      "value": -0.2
+    }
+  ]
+}
+```
+
+`grade` is one of `again`, `hard`, `good`, or `easy`. Absolute values replace
+the review desired retention. Relative values move from the current review
+desired retention toward 100% when positive and toward 0% when negative.
 
 In the field-rule editor, conflicting threshold rows are highlighted instead of
 shown in a separate error column. The editor also shows read-only workload

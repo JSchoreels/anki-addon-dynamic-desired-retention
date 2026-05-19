@@ -10,12 +10,15 @@ from .field_rules import (
     field_rules_to_config,
     load_field_rules,
 )
+from .grade_rules import GradeRule, grade_rules_to_config, load_grade_rules
 
 __all__ = [
     "FieldRule",
     "FieldThreshold",
+    "GradeRule",
     "Rule",
     "config_from_rules",
+    "load_grade_rules",
     "load_field_rules",
     "load_rules",
 ]
@@ -45,7 +48,9 @@ def load_rules(config: dict[str, Any] | None, logger: Logger) -> list[Rule]:
 
 
 def config_from_rules(
-    rules: list[Rule], field_rules: list[FieldRule] | None = None
+    rules: list[Rule],
+    field_rules: list[FieldRule] | None = None,
+    grade_rules: list[GradeRule] | None = None,
 ) -> dict[str, Any]:
     config: dict[str, Any] = {
         "rules": [
@@ -55,6 +60,8 @@ def config_from_rules(
     }
     if field_rules is not None:
         config["field_rules"] = field_rules_to_config(field_rules)
+    if grade_rules is not None:
+        config["grade_rules"] = grade_rules_to_config(grade_rules)
     return config
 
 
