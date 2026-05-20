@@ -183,10 +183,13 @@ slice's expected workload. The estimate is launched through Anki's background
 query operation and the UI displays `...` while a refresh is pending or running.
 A slice's workload is the sum of `1 / interval` for matching cards assigned to
 that threshold row. The interval is requested from Anki's FSRS interval API with
-the card id, the card's current FSRS stability, and the desired retention that
-the field rule gives that card. This makes the estimate use the FSRS version and
-parameters selected by the card's deck options; on Anki builds without an
-FSRS-version selector, Anki's default FSRS parameters for that card are used.
+the card id, the card's current internal FSRS stability, and the desired
+retention that the field rule gives that card. On this Anki fork,
+`memory_state.stability` is S90, so the add-on prefers
+`memory_state.stability_internal` and falls back to `memory_state.stability` only
+for older builds. This makes the estimate use the FSRS version and parameters
+selected by the card's deck options; on Anki builds without an FSRS-version
+selector, Anki's default FSRS parameters for that card are used.
 Before workload is summed, the projected interval is rounded to whole days and
 capped at the maximum interval configured by the card's original-or-current deck
 options. The estimate does not reproduce fuzz or load-balancer placement.
@@ -242,6 +245,8 @@ exclusion `filter_query` together with the current card id:
 If the exclusion query matches, the field rule is skipped. Otherwise, the add-on
 reads the current card's note type and configured note field value. It only
 reads note data. It does not create, update, or delete collection data.
+Current Anki builds are read through the `note_type()` API. The older
+deprecated `model()` API is not used.
 
 If a configured field is missing, a numeric field cannot be parsed as a number,
 or no threshold matches, the field rule is treated as a non-match. These card

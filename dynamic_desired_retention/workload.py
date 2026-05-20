@@ -403,7 +403,9 @@ def _top_percentile(
 
 def _card_stability(card: Any) -> float | None:
     memory_state = getattr(card, "memory_state", None)
-    stability = getattr(memory_state, "stability", None)
+    stability = getattr(memory_state, "stability_internal", None)
+    if not isinstance(stability, (int, float)):
+        stability = getattr(memory_state, "stability", None)
     if not isinstance(stability, (int, float)) or stability <= 0:
         return None
     return float(stability)

@@ -313,14 +313,11 @@ class DesiredRetentionMatcher:
 
 
 def _note_type_name(note: object) -> str | None:
-    note_type = None
     note_type_getter = getattr(note, "note_type", None)
-    model_getter = getattr(note, "model", None)
-    if callable(note_type_getter):
-        note_type = note_type_getter()
-    elif callable(model_getter):
-        note_type = model_getter()
+    if not callable(note_type_getter):
+        return None
 
+    note_type = note_type_getter()
     if isinstance(note_type, dict):
         name = note_type.get("name")
         return name if isinstance(name, str) else None

@@ -215,6 +215,38 @@ def test_text_field_rule_matches_exact_threshold_value() -> None:
     assert desired_retention == 0.9
 
 
+def test_note_type_read_does_not_touch_deprecated_model() -> None:
+    class NoteWithDeprecatedModel(FakeNote):
+        @property
+        def model(self):
+            raise AssertionError("model should not be accessed")
+
+    class CardWithDeprecatedModel(FakeCard):
+        def note(self) -> FakeNote:
+            return NoteWithDeprecatedModel(123, "Japanese", {"Priority": "High"})
+
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Priority",
+                value_type="text",
+                thresholds=[FieldThreshold("High", 0.95)],
+            )
+        ],
+        logging.getLogger("test"),
+    )
+
+    desired_retention = matcher.desired_retention_for_card(
+        collection=FakeCollection(set()),
+        card=CardWithDeprecatedModel(),
+        current_desired_retention=None,
+    )
+
+    assert desired_retention == 0.95
+
+
 def test_numeric_field_rule_matches_exact_threshold_value() -> None:
     matcher = DesiredRetentionMatcher(
         [],

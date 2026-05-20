@@ -13,8 +13,12 @@ from dynamic_desired_retention.workload import field_rule_slice_workloads
 
 
 class FakeMemoryState:
-    def __init__(self, stability: float) -> None:
+    def __init__(
+        self, stability: float, stability_internal: float | None = None
+    ) -> None:
         self.stability = stability
+        if stability_internal is not None:
+            self.stability_internal = stability_internal
 
 
 class FakeNote:
@@ -36,6 +40,7 @@ class FakeCard:
         card_id: int,
         value: str,
         stability: float | None,
+        stability_internal: float | None = None,
         interval: float = 1,
         deck_id: int = 1,
         original_deck_id: int = 0,
@@ -44,7 +49,11 @@ class FakeCard:
         self.did = deck_id
         self.odid = original_deck_id
         self.ivl = interval
-        self.memory_state = FakeMemoryState(stability) if stability is not None else None
+        self.memory_state = (
+            FakeMemoryState(stability, stability_internal)
+            if stability is not None
+            else None
+        )
         self._note = FakeNote(card_id, "Japanese", {"Frequency": value})
 
     def note(self) -> FakeNote:
@@ -155,6 +164,27 @@ def test_field_rule_workload_uses_linear_dr_inside_slice() -> None:
     assert workloads[1].retention_workload == pytest.approx((1 / 24) * 0.85)
     assert collection.batch_calls[0][0] == pytest.approx(0.85)
     assert collection.batch_calls[0][1] == [(1, 20.0)]
+
+
+def test_field_rule_workload_prefers_internal_stability() -> None:
+    collection = FakeCollection([FakeCard(1, "1500", 12, stability_internal=30)])
+    field_rule_slice_workloads(
+        collection,
+        FieldRuleRow(
+            note_type="Japanese",
+            field="Frequency",
+            filter_query="",
+            value_type="number",
+            linear_between_thresholds=False,
+            thresholds=[
+                FieldThresholdRow("2000", "90"),
+                FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+            ],
+        ),
+        logging.getLogger("test"),
+    )
+
+    assert collection.batch_calls[0][1] == [(1, 30.0)]
 
 
 def test_field_rule_workload_skips_cards_without_stability() -> None:
