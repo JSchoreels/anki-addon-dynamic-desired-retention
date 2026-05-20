@@ -101,7 +101,9 @@ def _field_if_set(message: Any, field_name: str) -> Any:
 
 def _review_stability(review_state: Any) -> float | None:
     memory_state = getattr(review_state, "memory_state", None)
-    stability = getattr(memory_state, "stability", None)
+    stability = getattr(memory_state, "stability_internal", None)
+    if not isinstance(stability, (int, float)):
+        stability = getattr(memory_state, "stability", None)
     if not isinstance(stability, (int, float)) or stability <= 0:
         return None
     return float(stability)

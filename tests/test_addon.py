@@ -5,6 +5,7 @@ import logging
 from anki.scheduler_pb2 import SchedulingStates
 
 from dynamic_desired_retention.addon import DynamicDesiredRetentionAddon
+from dynamic_desired_retention.grade_state_adjuster import _review_stability
 from dynamic_desired_retention.config import GradeRule, Rule
 from dynamic_desired_retention.matcher import DesiredRetentionMatcher
 
@@ -61,6 +62,17 @@ def test_addon_updates_answer_button_state_for_absolute_grade_rule() -> None:
 
     assert returned_states is reviewer._v3.states
     assert reviewer._v3.states.again.normal.review.scheduled_days == 1
+
+
+def test_review_stability_prefers_internal_stability() -> None:
+    memory_state = type(
+        "MemoryState",
+        (),
+        {"stability": 4, "stability_internal": 12},
+    )()
+    review_state = type("ReviewState", (), {"memory_state": memory_state})()
+
+    assert _review_stability(review_state) == 12
 
 
 def _states_with_again_review() -> SchedulingStates:
