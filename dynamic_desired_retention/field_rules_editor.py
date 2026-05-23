@@ -26,6 +26,7 @@ from aqt.qt import (
     QVBoxLayout,
     QWidget,
     qconnect,
+    sip,
 )
 
 from .field_rule_table import (
@@ -783,6 +784,8 @@ class FieldRulesEditor(QWidget):
         signature: tuple[object, ...],
         workloads: list[SliceWorkload],
     ) -> None:
+        if self._is_deleted():
+            return
         self._workload_running = False
         self._workload_cache[signature] = workloads
         if len(self._workload_cache) > 32:
@@ -793,6 +796,8 @@ class FieldRulesEditor(QWidget):
             self._workload_timer.start(0)
 
     def _workload_failed(self, generation: int, exc: Exception) -> None:
+        if self._is_deleted():
+            return
         self._workload_running = False
         self._logger.error(
             "failed to compute field rule workload",
@@ -804,6 +809,8 @@ class FieldRulesEditor(QWidget):
             self._workload_timer.start(0)
 
     def _show_threshold_workload_pending(self) -> None:
+        if self._is_deleted():
+            return
         self._normalizing_threshold_item = True
         try:
             for table_row in range(self._threshold_table.rowCount()):
@@ -816,6 +823,8 @@ class FieldRulesEditor(QWidget):
         self._refresh_threshold_errors()
 
     def _apply_threshold_workloads(self, workloads: list[SliceWorkload]) -> None:
+        if self._is_deleted():
+            return
         self._normalizing_threshold_item = True
         try:
             for table_row in range(self._threshold_table.rowCount()):
@@ -834,6 +843,9 @@ class FieldRulesEditor(QWidget):
         finally:
             self._normalizing_threshold_item = False
         self._refresh_threshold_errors()
+
+    def _is_deleted(self) -> bool:
+        return sip.isdeleted(self) or sip.isdeleted(self._threshold_table)
 
     def _set_workload_summary(self, workloads: list[SliceWorkload]) -> None:
         total_workload = sum(workload.workload for workload in workloads)

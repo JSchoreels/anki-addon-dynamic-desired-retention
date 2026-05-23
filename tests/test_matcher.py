@@ -88,6 +88,64 @@ def test_first_matching_rule_wins() -> None:
     assert collection.searched == ["note:Japanese AND cid:123"]
 
 
+def test_base_desired_retention_match_explains_search_rule() -> None:
+    collection = FakeCollection({"note:Japanese AND cid:123"})
+    matcher = DesiredRetentionMatcher(
+        [Rule(query="note:Japanese", desired_retention=0.9)],
+        [],
+        logging.getLogger("test"),
+    )
+
+    match = matcher.base_desired_retention_match_for_card(
+        collection=collection,
+        card=FakeCard(),
+    )
+
+    assert match is not None
+    assert match.desired_retention == 0.9
+    assert match.source == "search"
+    assert match.details == "note:Japanese"
+
+
+def test_base_desired_retention_match_explains_relative_field_rule() -> None:
+    cards = [
+        FakeCard(card_id=index + 1, fields={"Frequency": value})
+        for index, value in enumerate([100, 80, 60, 40, 20])
+    ]
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                field_value_mode="relative",
+                value_type="number",
+                linear_between_thresholds=True,
+                thresholds=[
+                    FieldThreshold("50", 0.9),
+                    FieldThreshold("100", 0.7),
+                ],
+            )
+        ],
+        logging.getLogger("test"),
+    )
+
+    match = matcher.base_desired_retention_match_for_card(
+        collection=FakeCollection(
+            search_results={"note:\"Japanese\"": [card.id for card in cards]},
+            cards=cards,
+        ),
+        card=cards[2],
+    )
+
+    assert match is not None
+    assert match.source == "field"
+    assert match.details == (
+        "Japanese.Frequency: value 60 is Top 60.00%; "
+        "matched slice Top 50.00..100.00"
+    )
+
+
 def test_no_match_keeps_incoming_desired_retention() -> None:
     collection = FakeCollection(set())
     matcher = DesiredRetentionMatcher(
@@ -581,6 +639,48 @@ def test_relative_numeric_field_rule_uses_minimum_above_largest_percentile() -> 
     )
 
     assert desired_retention == 0.5
+
+
+def test_relative_numeric_field_rule_logs_match_details(caplog: pytest.LogCaptureFixture) -> None:
+    cards = [
+        FakeCard(card_id=index + 1, fields={"Frequency": value})
+        for index, value in enumerate([100, 80, 60, 40, 20])
+    ]
+    logger = logging.getLogger("test.field-rule-log")
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                field_value_mode="relative",
+                value_type="number",
+                linear_between_thresholds=True,
+                thresholds=[
+                    FieldThreshold("50", 0.9),
+                    FieldThreshold("100", 0.7),
+                ],
+            )
+        ],
+        logger,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        desired_retention = matcher.desired_retention_for_card(
+            collection=FakeCollection(
+                search_results={"note:\"Japanese\"": [card.id for card in cards]},
+                cards=cards,
+            ),
+            card=cards[2],
+            current_desired_retention=0.7,
+        )
+
+    assert desired_retention == pytest.approx(0.86)
+    assert (
+        "field rule 0 matched card 3; note_type=Japanese field=Frequency "
+        "value_type=number value_mode=relative raw_value=60 match_value=60.00 "
+        "slice=50.00..100.00 linear=True desired_retention=0.86"
+    ) in caplog.text
 
 
 def test_relative_numeric_field_rule_uses_filter_for_population() -> None:

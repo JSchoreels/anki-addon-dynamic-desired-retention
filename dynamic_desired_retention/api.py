@@ -10,6 +10,7 @@ class DesiredRetentionProvider(Protocol):
         collection: Any,
         card: Any,
         current_desired_retention: float | None,
+        answer_grade: str | None = None,
     ) -> float | None: ...
 
 
@@ -26,6 +27,7 @@ def effective_desired_retention(
     collection: Any,
     card: Any,
     current_desired_retention: float | None,
+    answer_grade: str | None = None,
 ) -> float | None:
     if _provider is None:
         return current_desired_retention
@@ -34,4 +36,5 @@ def effective_desired_retention(
         collection=collection,
         card=card,
         current_desired_retention=current_desired_retention,
+        answer_grade=answer_grade,
     )

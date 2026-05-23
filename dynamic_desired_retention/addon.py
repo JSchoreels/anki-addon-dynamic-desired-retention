@@ -50,6 +50,9 @@ class DynamicDesiredRetentionAddon:
             self._logger.warning(
                 "grade rules require reviewer_will_update_scheduling_states"
             )
+        card_info_hook = getattr(gui_hooks, "card_info_will_add_rows", None)
+        if card_info_hook is not None:
+            card_info_hook.append(self.add_card_info_rows)
 
     def compute_desired_retention(
         self, desired_retention: float | None, reviewer: Any, card: Any
@@ -106,6 +109,32 @@ class DynamicDesiredRetentionAddon:
                 "applied grade rules to answer states for card %s", card.id
             )
         return states
+
+    def add_card_info_rows(self, rows: list[Any], card: Any) -> None:
+        if mw is None or mw.col is None:
+            return
+
+        match = self._matcher.base_desired_retention_match_for_card(
+            collection=mw.col,
+            card=card,
+        )
+        if match is None:
+            return
+
+        from aqt.browser.card_info import CardInfoRow
+
+        rows.append(
+            CardInfoRow(
+                label="Dynamic DR",
+                value=f"{match.desired_retention:.2f}",
+            )
+        )
+        rows.append(
+            CardInfoRow(
+                label="Dynamic DR Match",
+                value=f"{match.source}: {match.details}",
+            )
+        )
 
     def _on_config_updated(self, _config: Any) -> None:
         self._reload_config()

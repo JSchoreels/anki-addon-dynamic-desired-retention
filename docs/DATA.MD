@@ -218,6 +218,15 @@ for the configured query and the current card id together:
 The add-on only reads search results. It does not create, update, or delete
 collection data.
 
+## Card Info Read
+
+When Anki provides the `card_info_will_add_rows` GUI hook, the add-on evaluates
+the current search and field rules for the Card Info card and appends
+display-only rows for the live dynamic desired retention match. This reads the
+same card, note, note type, field values and search results used during review,
+but does not write to collection storage and does not use the card's previously
+stored desired retention.
+
 If no rule matches, the hook returns the incoming desired retention value. In the
 normal Anki hook path this is `None`, which tells Anki to compute the base
 deck/preset desired retention.
@@ -300,9 +309,11 @@ rules do not need a base desired retention.
 
 Other add-ons can call the top-level
 `dynamic_desired_retention.effective_desired_retention()` API with a collection,
-card and base desired retention. The add-on applies the same ordered rule
-matching described above and returns either the matching rule value or the
-incoming base value.
+card and base desired retention. Callers can also pass `answer_grade` as
+`again`, `hard`, `good`, or `easy` when they are recomputing desired retention
+for a known review grade. The add-on applies the same ordered rule matching
+described above, applies the matching current grade rule when a grade is passed,
+and returns either the matching rule value or the incoming base value.
 
 This API does not update cards or config. Callers that reschedule or otherwise
 write card data remain responsible for persisting the returned desired retention

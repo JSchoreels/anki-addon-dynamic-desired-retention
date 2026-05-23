@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 from anki.scheduler_pb2 import SchedulingStates
 
+import dynamic_desired_retention.addon as addon_module
 from dynamic_desired_retention.addon import DynamicDesiredRetentionAddon
 from dynamic_desired_retention.grade_state_adjuster import _review_stability
 from dynamic_desired_retention.config import GradeRule, Rule
@@ -73,6 +75,30 @@ def test_review_stability_prefers_internal_stability() -> None:
     review_state = type("ReviewState", (), {"memory_state": memory_state})()
 
     assert _review_stability(review_state) == 12
+
+
+def test_addon_adds_dynamic_dr_card_info_rows(monkeypatch) -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._matcher = DesiredRetentionMatcher(
+        [Rule("note:Japanese", 0.6)],
+        [],
+        logger,
+    )
+    rows = []
+
+    monkeypatch.setattr(
+        addon_module,
+        "mw",
+        SimpleNamespace(col=FakeCollection()),
+    )
+
+    addon.add_card_info_rows(rows, FakeCard())
+
+    assert [(row.label, row.value) for row in rows] == [
+        ("Dynamic DR", "0.60"),
+        ("Dynamic DR Match", "search: note:Japanese"),
+    ]
 
 
 def _states_with_again_review() -> SchedulingStates:

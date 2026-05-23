@@ -17,6 +17,7 @@ class Provider:
         collection,
         card,
         current_desired_retention: float | None,
+        answer_grade: str | None = None,
     ) -> float | None:
         return card.desired_retention
 
@@ -48,6 +49,31 @@ def test_effective_desired_retention_uses_provider() -> None:
             current_desired_retention=0.9,
         )
         == 0.95
+    )
+
+
+def test_effective_desired_retention_passes_answer_grade_to_provider() -> None:
+    class GradeProvider:
+        def effective_desired_retention(
+            self,
+            *,
+            collection,
+            card,
+            current_desired_retention: float | None,
+            answer_grade: str | None = None,
+        ) -> float | None:
+            return 0.9 if answer_grade == "again" else current_desired_retention
+
+    set_desired_retention_provider(GradeProvider())
+
+    assert (
+        effective_desired_retention(
+            collection=object(),
+            card=Card(),
+            current_desired_retention=0.7,
+            answer_grade="again",
+        )
+        == 0.9
     )
 
 
