@@ -26,10 +26,14 @@ Expected config shape:
       "value_type": "number",
       "linear_between_thresholds": false,
       "minimum_desired_retention": 0.5,
+      "minimum_retention_minimum_interval": 30,
+      "minimum_retention_maximum_interval": 365,
       "thresholds": [
         {
           "value": "1000",
-          "desired_retention": 0.9
+          "desired_retention": 0.9,
+          "minimum_interval": 2,
+          "maximum_interval": 30
         },
         {
           "value": "20000",
@@ -123,6 +127,16 @@ editor highlights conflicting rows when desired retention increases in the wrong
 direction or when `Minimum Retention` is higher than the least-important
 threshold. Saving applies the same validation.
 
+Each field-rule slice can optionally set interval bounds in days. Normal
+threshold slices store `minimum_interval` and `maximum_interval` on the
+threshold object. The special `Minimum Retention` slice stores
+`minimum_retention_minimum_interval` and `minimum_retention_maximum_interval` on
+the field rule because it is not a normal threshold object in config. Bounds are
+positive whole numbers of days, and a maximum interval must not be lower than
+the matching minimum interval. When present, these bounds clamp the review-state
+intervals for the field-rule slice after Anki or grade-rule desired-retention
+intervals have been computed.
+
 Invalid search rules, field rules and grade rules are not used. The add-on logs
 a warning with the rule index so the config can be fixed without changing
 scheduler behavior for unrelated cards.
@@ -192,7 +206,17 @@ selected by the card's deck options; on Anki builds without an FSRS-version
 selector, Anki's default FSRS parameters for that card are used.
 Before workload is summed, the projected interval is rounded to whole days and
 capped at the maximum interval configured by the card's original-or-current deck
-options. The estimate does not reproduce fuzz or load-balancer placement.
+options. Field-rule slice interval bounds are then applied to the projected
+interval, so workload estimates match the interval clamp configured for that
+slice. During one workload scan, note type, note identity and field value reads
+are cached by note id so sibling cards do not re-read the same note data.
+Numeric threshold rows are prepared once per scan before card field values are
+matched. When Anki exposes the variable-target FSRS interval batch API, the
+workload estimate sends all matched cards in one request with each card's own
+desired retention. Older Anki builds fall back to grouping FSRS interval
+requests by desired retention because their batch interval API accepts one
+target retention per call. The estimate does not reproduce fuzz or load-balancer
+placement.
 `Workload Ratio` is the slice workload divided by the total workload for the
 field rule. The editor displays workload rounded to whole `review/day` values,
 and displays `Total Workload` as the rounded sum of slice workloads. It also
@@ -287,6 +311,11 @@ states before the reviewer asks Anki to describe the next states. The add-on
 does not create, update, or delete card data at this point; the selected state
 is persisted later by Anki's normal answer flow.
 
+Field-rule interval bounds use the same scheduling-state hook. When the matched
+field-rule slice has a minimum and/or maximum interval, the add-on clamps the
+review scheduling states in memory. This keeps the answer-button label and the
+state Anki later persists aligned with the slice interval bounds.
+
 Before updating answer states, the add-on resolves the base desired retention
 from search rules and field rules. If an answer grade has an enabled absolute
 grade rule, that absolute value is used for that grade's scheduling state. If an
@@ -318,3 +347,11 @@ and returns either the matching rule value or the incoming base value.
 This API does not update cards or config. Callers that reschedule or otherwise
 write card data remain responsible for persisting the returned desired retention
 when that is part of their workflow.
+
+Add-ons that need field-rule interval bounds can call
+`dynamic_desired_retention.effective_desired_retention_info()` with the same
+arguments. It returns the effective desired retention plus the matched field
+slice's `minimum_interval` and `maximum_interval` values when those bounds are
+configured. Search rules and field slices without interval bounds return no
+bounds. This is also read-only collection access; callers remain responsible for
+applying bounds to their own scheduling updates.

@@ -78,8 +78,15 @@ def test_load_field_rules_accepts_text_and_number_rules() -> None:
                     "relative_top_direction": "lower",
                     "value_type": "number",
                     "minimum_desired_retention": 0.5,
+                    "minimum_retention_minimum_interval": 30,
+                    "minimum_retention_maximum_interval": 365,
                     "thresholds": [
-                        {"value": "Top 10%", "desired_retention": 0.9},
+                        {
+                            "value": "Top 10%",
+                            "desired_retention": 0.9,
+                            "minimum_interval": 2,
+                            "maximum_interval": 20,
+                        },
                         {"value": "30%", "desired_retention": 0.8},
                     ],
                 },
@@ -107,8 +114,15 @@ def test_load_field_rules_accepts_text_and_number_rules() -> None:
             relative_top_direction="lower",
             value_type="number",
             minimum_desired_retention=0.5,
+            minimum_retention_minimum_interval=30,
+            minimum_retention_maximum_interval=365,
             thresholds=[
-                FieldThreshold(value="10", desired_retention=0.9),
+                FieldThreshold(
+                    value="10",
+                    desired_retention=0.9,
+                    minimum_interval=2,
+                    maximum_interval=20,
+                ),
                 FieldThreshold(value="30", desired_retention=0.8),
             ],
         ),
@@ -201,8 +215,15 @@ def test_config_from_rules_can_include_field_rules() -> None:
                 filter_query="deck:Japanese",
                 value_type="number",
                 minimum_desired_retention=0.5,
+                minimum_retention_minimum_interval=30,
+                minimum_retention_maximum_interval=365,
                 thresholds=[
-                    FieldThreshold(value="1000", desired_retention=0.9),
+                    FieldThreshold(
+                        value="1000",
+                        desired_retention=0.9,
+                        minimum_interval=2,
+                        maximum_interval=20,
+                    ),
                     FieldThreshold(value="2000", desired_retention=0.8),
                 ],
             )
@@ -220,13 +241,56 @@ def test_config_from_rules_can_include_field_rules() -> None:
                 "value_type": "number",
                 "linear_between_thresholds": False,
                 "minimum_desired_retention": 0.5,
+                "minimum_retention_minimum_interval": 30,
+                "minimum_retention_maximum_interval": 365,
                 "thresholds": [
-                    {"value": "1000", "desired_retention": 0.9},
+                    {
+                        "value": "1000",
+                        "desired_retention": 0.9,
+                        "minimum_interval": 2,
+                        "maximum_interval": 20,
+                    },
                     {"value": "2000", "desired_retention": 0.8},
                 ],
             }
         ],
     }
+
+
+def test_load_field_rules_rejects_invalid_interval_bounds(caplog) -> None:
+    caplog.set_level(logging.WARNING)
+
+    field_rules = load_field_rules(
+        {
+            "field_rules": [
+                {
+                    "note_type": "Japanese",
+                    "field": "Frequency",
+                    "value_type": "number",
+                    "thresholds": [
+                        {
+                            "value": "1000",
+                            "desired_retention": 0.9,
+                            "minimum_interval": 10,
+                            "maximum_interval": 5,
+                        }
+                    ],
+                },
+                {
+                    "note_type": "Japanese",
+                    "field": "Frequency",
+                    "value_type": "number",
+                    "minimum_retention_minimum_interval": 10,
+                    "thresholds": [{"value": "1000", "desired_retention": 0.9}],
+                },
+            ]
+        },
+        logging.getLogger("test"),
+    )
+
+    assert field_rules == []
+    assert "ignored field rule 0 threshold 0" in caplog.text
+    assert "ignored field rule 1" in caplog.text
 
 
 def test_load_grade_rules_accepts_enabled_grade_rules() -> None:

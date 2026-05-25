@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .api import effective_desired_retention
+from .api import effective_desired_retention, effective_desired_retention_info
 from .config import (
     FieldRule,
     FieldThreshold,
@@ -19,6 +19,7 @@ __all__ = [
     "GradeRule",
     "Rule",
     "effective_desired_retention",
+    "effective_desired_retention_info",
     "load_field_rules",
     "load_grade_rules",
     "load_rules",

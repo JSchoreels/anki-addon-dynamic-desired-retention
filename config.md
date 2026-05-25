@@ -1,7 +1,8 @@
 # Dynamic Desired Retention
 
 Requires an Anki build with `gui_hooks.reviewer_will_compute_desired_retention`.
-Grade rules also require `gui_hooks.reviewer_will_update_scheduling_states`.
+Grade rules and field-rule interval bounds also require
+`gui_hooks.reviewer_will_update_scheduling_states`.
 
 Configure ordered search rules in JSON. The first search rule whose Anki search
 query matches the current review card provides the desired retention override.
@@ -35,10 +36,14 @@ Use decimal desired retention values:
       "value_type": "number",
       "linear_between_thresholds": false,
       "minimum_desired_retention": 0.5,
+      "minimum_retention_minimum_interval": 30,
+      "minimum_retention_maximum_interval": 365,
       "thresholds": [
         {
           "value": "1000",
-          "desired_retention": 0.9
+          "desired_retention": 0.9,
+          "minimum_interval": 2,
+          "maximum_interval": 30
         },
         {
           "value": "20000",
@@ -58,6 +63,14 @@ steps. With `relative_top_direction: "lower"`, values up to `1000` resolve to
 values receive the higher desired retention and the threshold order is reversed.
 The editor always includes a `Minimum Retention` row for numeric rules; older
 rules without one are initialized to 50% when opened in the editor.
+
+Each threshold slice can set optional `minimum_interval` and `maximum_interval`
+values in days. The special `Minimum Retention` slice stores its bounds as
+`minimum_retention_minimum_interval` and
+`minimum_retention_maximum_interval` on the field rule. Interval bounds are
+positive whole numbers of days, and a maximum must not be lower than its
+matching minimum. When a field rule matches, these bounds clamp the answer
+button review intervals for that slice.
 
 `scope_query` is an optional Anki search query that must match for a field rule
 to apply. `filter_query` is the exclusion query: if it matches the current card,
@@ -114,7 +127,8 @@ of the field rule's total estimated workload. Below the threshold table,
 workload-weighted desired retention. The estimates run in the background and
 show `...` while refreshing. Intervals are computed through Anki's FSRS interval
 API for each card and desired retention, so the selected FSRS deck-option
-version is used when available.
+version is used when available. The same slice interval bounds are applied to
+the projected intervals before the workload is summed.
 
 When no rule matches, the add-on returns `null` to Anki's hook, and Anki uses the
 deck/preset desired retention.

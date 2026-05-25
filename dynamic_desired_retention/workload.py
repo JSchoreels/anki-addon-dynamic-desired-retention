@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from logging import Logger
+from time import perf_counter
 from typing import Any
 
 from .field_rule_table import (
@@ -39,12 +40,22 @@ class _ThresholdSpec:
     desired_retention: float
     numeric_value: float | None
     is_minimum: bool
+    minimum_interval: int | None
+    maximum_interval: int | None
+
+
+@dataclass(frozen=True)
+class _NumericSliceSpecs:
+    normal_specs: tuple[_ThresholdSpec, ...]
+    minimum_spec: _ThresholdSpec | None
 
 
 @dataclass(frozen=True)
 class _SliceMatch:
     row_index: int
     desired_retention: float
+    minimum_interval: int | None
+    maximum_interval: int | None
 
 
 @dataclass(frozen=True)
@@ -53,6 +64,8 @@ class _WorkloadCard:
     row_index: int
     stability: float
     desired_retention: float
+    minimum_interval: int | None
+    maximum_interval: int | None
     current_interval: float | None
     max_interval: int | None
 
@@ -67,9 +80,17 @@ class _FieldCard:
     max_interval: int | None
 
 
+@dataclass(frozen=True)
+class _NoteFieldData:
+    note_type: str
+    note_identity: tuple[str, int]
+    field_value: str | None
+
+
 def field_rule_slice_workloads(
     collection: Any, row: FieldRuleRow, logger: Logger
 ) -> list[SliceWorkload]:
+    started_at = perf_counter()
     rows = threshold_rows_for_display(row)
     empty_workloads = _empty_workloads(rows)
     if collection is None or not rows:
@@ -80,37 +101,79 @@ def field_rule_slice_workloads(
         return empty_workloads
 
     try:
+        search_started_at = perf_counter()
         card_ids = _matching_card_ids(collection, row)
     except Exception:
-        logger.exception("field rule workload search failed for %s.%s", row.note_type, row.field)
+        logger.exception(
+            "field rule workload search failed for %s.%s", row.note_type, row.field
+        )
         return empty_workloads
+    logger.debug(
+        "field rule workload search for %s.%s: cards=%s elapsed_ms=%s",
+        row.note_type,
+        row.field,
+        len(card_ids),
+        _elapsed_ms(search_started_at),
+    )
 
+    field_cards_started_at = perf_counter()
     field_cards = _field_cards(collection, row, card_ids, logger)
+    logger.debug(
+        "field rule workload loaded fields for %s.%s: searched_cards=%s field_cards=%s elapsed_ms=%s",
+        row.note_type,
+        row.field,
+        len(card_ids),
+        len(field_cards),
+        _elapsed_ms(field_cards_started_at),
+    )
+    relative_started_at = perf_counter()
     relative_population = (
         _relative_population(field_cards)
         if row.value_type == "number" and row.field_value_mode == "relative"
         else []
     )
+    if row.field_value_mode == "relative":
+        logger.debug(
+            "field rule workload built relative population for %s.%s: values=%s elapsed_ms=%s",
+            row.note_type,
+            row.field,
+            len(relative_population),
+            _elapsed_ms(relative_started_at),
+        )
     if row.field_value_mode == "relative" and not relative_population:
         return empty_workloads
 
+    match_started_at = perf_counter()
+    numeric_specs = _numeric_slice_specs(specs) if row.value_type == "number" else None
     workload_cards = _workload_cards(
-        row, field_cards, specs, relative_population, logger
+        row, field_cards, specs, numeric_specs, relative_population, logger
+    )
+    logger.debug(
+        "field rule workload matched fields for %s.%s: field_cards=%s workload_cards=%s elapsed_ms=%s",
+        row.note_type,
+        row.field,
+        len(field_cards),
+        len(workload_cards),
+        _elapsed_ms(match_started_at),
     )
     workloads = _slice_workload_values(collection, workload_cards, len(rows), logger)
     total = sum(
         workload for workload, _count, _retention_workload, _current_workload in workloads
     )
     logger.debug(
-        "field rule workload computed for %s.%s: cards=%s workload=%s current_workload=%s",
+        "field rule workload computed for %s.%s: cards=%s workload=%s current_workload=%s elapsed_ms=%s",
         row.note_type,
         row.field,
-        sum(count for _workload, count, _retention_workload, _current_workload in workloads),
+        sum(
+            count
+            for _workload, count, _retention_workload, _current_workload in workloads
+        ),
         total,
         sum(
             current_workload
             for _workload, _count, _retention_workload, current_workload in workloads
         ),
+        _elapsed_ms(started_at),
     )
     return [
         SliceWorkload(
@@ -165,6 +228,14 @@ def _threshold_specs(
                 )
                 return []
 
+        interval_bounds = _interval_bounds(threshold)
+        if interval_bounds is None:
+            logger.debug(
+                "field rule workload skipped invalid interval bounds at row %s",
+                row_index,
+            )
+            return []
+
         specs.append(
             _ThresholdSpec(
                 row_index=row_index,
@@ -172,6 +243,8 @@ def _threshold_specs(
                 desired_retention=desired_retention,
                 numeric_value=numeric_value,
                 is_minimum=is_minimum,
+                minimum_interval=interval_bounds[0],
+                maximum_interval=interval_bounds[1],
             )
         )
     return specs
@@ -190,6 +263,39 @@ def _numeric_threshold_value(value: str, field_value_mode: str) -> float | None:
         return None
 
 
+def _interval_bounds(
+    threshold: FieldThresholdRow,
+) -> tuple[int | None, int | None] | None:
+    minimum_interval = _interval_days(threshold.minimum_interval_days)
+    maximum_interval = _interval_days(threshold.maximum_interval_days)
+    if threshold.minimum_interval_days.strip() and minimum_interval is None:
+        return None
+    if threshold.maximum_interval_days.strip() and maximum_interval is None:
+        return None
+    if (
+        minimum_interval is not None
+        and maximum_interval is not None
+        and maximum_interval < minimum_interval
+    ):
+        return None
+    return minimum_interval, maximum_interval
+
+
+def _interval_days(value: str) -> int | None:
+    stripped_value = value.strip()
+    if not stripped_value:
+        return None
+
+    try:
+        interval = int(stripped_value)
+    except ValueError:
+        return None
+
+    if interval < 1:
+        return None
+    return interval
+
+
 def _field_cards(
     collection: Any,
     row: FieldRuleRow,
@@ -198,25 +304,35 @@ def _field_cards(
 ) -> list[_FieldCard]:
     field_cards: list[_FieldCard] = []
     max_interval_by_deck: dict[int, int | None] = {}
+    note_field_data_by_note_id: dict[int, _NoteFieldData] = {}
     for card_id in card_ids:
         try:
             card = collection.get_card(card_id)
-            note = card.note()
+            note_id = getattr(card, "nid", None)
+            note_data = (
+                note_field_data_by_note_id.get(note_id)
+                if isinstance(note_id, int)
+                else None
+            )
+            if note_data is None:
+                note = card.note()
+                note_data = _note_field_data(note, row)
+                if isinstance(note_id, int):
+                    note_field_data_by_note_id[note_id] = note_data
         except Exception:
             continue
 
-        if _note_type_name(note) != row.note_type:
+        if note_data.note_type != row.note_type:
             continue
 
-        field_value = _note_field_value(note, row.field)
-        if field_value is None:
+        if note_data.field_value is None:
             continue
 
         field_cards.append(
             _FieldCard(
                 card_id=int(getattr(card, "id", card_id)),
-                note_identity=_note_identity(note),
-                field_value=field_value,
+                note_identity=note_data.note_identity,
+                field_value=note_data.field_value,
                 stability=_card_stability(card),
                 current_interval=_card_interval(card),
                 max_interval=_card_max_interval(
@@ -228,16 +344,30 @@ def _field_cards(
     return field_cards
 
 
+def _note_field_data(note: Any, row: FieldRuleRow) -> _NoteFieldData:
+    note_type = _note_type_name(note)
+    return _NoteFieldData(
+        note_type=note_type,
+        note_identity=_note_identity(note),
+        field_value=(
+            _note_field_value(note, row.field) if note_type == row.note_type else None
+        ),
+    )
+
+
 def _workload_cards(
     row: FieldRuleRow,
     field_cards: Sequence[_FieldCard],
     specs: Sequence[_ThresholdSpec],
+    numeric_specs: _NumericSliceSpecs | None,
     relative_population: Sequence[float],
     logger: Logger,
 ) -> list[_WorkloadCard]:
     workload_cards: list[_WorkloadCard] = []
     for field_card in field_cards:
-        match = _slice_match(field_card.field_value, row, specs, relative_population)
+        match = _slice_match(
+            field_card.field_value, row, specs, numeric_specs, relative_population
+        )
         if match is None:
             continue
 
@@ -250,6 +380,8 @@ def _workload_cards(
                 row_index=match.row_index,
                 stability=field_card.stability,
                 desired_retention=match.desired_retention,
+                minimum_interval=match.minimum_interval,
+                maximum_interval=match.maximum_interval,
                 current_interval=field_card.current_interval,
                 max_interval=field_card.max_interval,
             )
@@ -266,12 +398,13 @@ def _slice_match(
     field_value: str,
     row: FieldRuleRow,
     specs: Sequence[_ThresholdSpec],
+    numeric_specs: _NumericSliceSpecs | None,
     relative_population: Sequence[float],
 ) -> _SliceMatch | None:
     if row.value_type == "text":
         for spec in specs:
             if not spec.is_minimum and field_value == spec.value:
-                return _SliceMatch(spec.row_index, spec.desired_retention)
+                return _slice_match_from_spec(spec, spec.desired_retention)
         return None
 
     try:
@@ -286,45 +419,69 @@ def _slice_match(
 
     return _numeric_slice_match(
         value,
-        specs,
+        numeric_specs,
         row.linear_between_thresholds,
         desired_retention_order,
     )
 
 
+def _numeric_slice_specs(specs: Sequence[_ThresholdSpec]) -> _NumericSliceSpecs:
+    return _NumericSliceSpecs(
+        normal_specs=tuple(
+            sorted(
+                (
+                    spec
+                    for spec in specs
+                    if not spec.is_minimum and spec.numeric_value is not None
+                ),
+                key=lambda spec: spec.numeric_value or 0,
+            )
+        ),
+        minimum_spec=next((spec for spec in specs if spec.is_minimum), None),
+    )
+
+
 def _numeric_slice_match(
     value: float,
-    specs: Sequence[_ThresholdSpec],
+    numeric_specs: _NumericSliceSpecs | None,
     linear_between_thresholds: bool,
     desired_retention_order: str,
 ) -> _SliceMatch | None:
-    normal_specs = sorted(
-        [spec for spec in specs if not spec.is_minimum and spec.numeric_value is not None],
-        key=lambda spec: spec.numeric_value or 0,
-    )
+    if numeric_specs is None:
+        return None
+
+    normal_specs = numeric_specs.normal_specs
+    minimum_spec = numeric_specs.minimum_spec
     if not normal_specs:
         return None
 
-    minimum_spec = next((spec for spec in specs if spec.is_minimum), None)
-
     if not linear_between_thresholds:
-        return _step_slice_match(value, normal_specs, minimum_spec, desired_retention_order)
+        return _step_slice_match(
+            value,
+            normal_specs,
+            numeric_specs.minimum_spec,
+            desired_retention_order,
+        )
 
     for spec in normal_specs:
         if value == spec.numeric_value:
-            return _SliceMatch(spec.row_index, spec.desired_retention)
+            return _slice_match_from_spec(spec, spec.desired_retention)
 
     first_spec = normal_specs[0]
     last_spec = normal_specs[-1]
     if value < (first_spec.numeric_value or 0):
         if desired_retention_order == "higher" and minimum_spec is not None:
-            return _SliceMatch(minimum_spec.row_index, minimum_spec.desired_retention)
-        return _SliceMatch(first_spec.row_index, first_spec.desired_retention)
+            return _slice_match_from_spec(
+                minimum_spec, minimum_spec.desired_retention
+            )
+        return _slice_match_from_spec(first_spec, first_spec.desired_retention)
 
     if value > (last_spec.numeric_value or 0):
         if desired_retention_order == "lower" and minimum_spec is not None:
-            return _SliceMatch(minimum_spec.row_index, minimum_spec.desired_retention)
-        return _SliceMatch(last_spec.row_index, last_spec.desired_retention)
+            return _slice_match_from_spec(
+                minimum_spec, minimum_spec.desired_retention
+            )
+        return _slice_match_from_spec(last_spec, last_spec.desired_retention)
 
     for lower_spec, upper_spec in zip(normal_specs, normal_specs[1:]):
         lower_value = lower_spec.numeric_value or 0
@@ -334,12 +491,10 @@ def _numeric_slice_match(
             desired_retention = lower_spec.desired_retention + ratio * (
                 upper_spec.desired_retention - lower_spec.desired_retention
             )
-            row_index = (
-                lower_spec.row_index
-                if desired_retention_order == "higher"
-                else upper_spec.row_index
+            slice_spec = (
+                lower_spec if desired_retention_order == "higher" else upper_spec
             )
-            return _SliceMatch(row_index, desired_retention)
+            return _slice_match_from_spec(slice_spec, desired_retention)
 
     return None
 
@@ -353,23 +508,36 @@ def _step_slice_match(
     if desired_retention_order == "higher":
         for spec in reversed(normal_specs):
             if value >= (spec.numeric_value or 0):
-                return _SliceMatch(spec.row_index, spec.desired_retention)
+                return _slice_match_from_spec(spec, spec.desired_retention)
 
         if minimum_spec is not None:
-            return _SliceMatch(minimum_spec.row_index, minimum_spec.desired_retention)
+            return _slice_match_from_spec(
+                minimum_spec, minimum_spec.desired_retention
+            )
 
         first_spec = normal_specs[0]
-        return _SliceMatch(first_spec.row_index, first_spec.desired_retention)
+        return _slice_match_from_spec(first_spec, first_spec.desired_retention)
 
     for spec in normal_specs:
         if value <= (spec.numeric_value or 0):
-            return _SliceMatch(spec.row_index, spec.desired_retention)
+            return _slice_match_from_spec(spec, spec.desired_retention)
 
     if minimum_spec is not None:
-        return _SliceMatch(minimum_spec.row_index, minimum_spec.desired_retention)
+        return _slice_match_from_spec(minimum_spec, minimum_spec.desired_retention)
 
     last_spec = normal_specs[-1]
-    return _SliceMatch(last_spec.row_index, last_spec.desired_retention)
+    return _slice_match_from_spec(last_spec, last_spec.desired_retention)
+
+
+def _slice_match_from_spec(
+    spec: _ThresholdSpec, desired_retention: float
+) -> _SliceMatch:
+    return _SliceMatch(
+        row_index=spec.row_index,
+        desired_retention=desired_retention,
+        minimum_interval=spec.minimum_interval,
+        maximum_interval=spec.maximum_interval,
+    )
 
 
 def _relative_population(field_cards: Sequence[_FieldCard]) -> list[float]:
@@ -393,12 +561,11 @@ def _top_percentile(
     if not population:
         return 0
 
-    sorted_population = list(population)
     if relative_top_direction == "higher":
-        matching_count = len(sorted_population) - bisect_left(sorted_population, value)
+        matching_count = len(population) - bisect_left(population, value)
     else:
-        matching_count = bisect_right(sorted_population, value)
-    return matching_count / len(sorted_population) * 100
+        matching_count = bisect_right(population, value)
+    return matching_count / len(population) * 100
 
 
 def _card_stability(card: Any) -> float | None:
@@ -484,6 +651,16 @@ def _scheduled_interval(raw_interval: float, max_interval: int | None) -> int:
     return interval
 
 
+def _apply_interval_bounds(
+    interval: int, minimum_interval: int | None, maximum_interval: int | None
+) -> int:
+    if minimum_interval is not None:
+        interval = max(interval, minimum_interval)
+    if maximum_interval is not None:
+        interval = min(interval, maximum_interval)
+    return interval
+
+
 def _slice_workload_values(
     collection: Any,
     workload_cards: Sequence[_WorkloadCard],
@@ -501,6 +678,11 @@ def _slice_workload_values(
         if interval is None or interval <= 0:
             continue
         scheduled_interval = _scheduled_interval(interval, workload_card.max_interval)
+        scheduled_interval = _apply_interval_bounds(
+            scheduled_interval,
+            workload_card.minimum_interval,
+            workload_card.maximum_interval,
+        )
         workload = 1 / scheduled_interval
         mutable_workloads[workload_card.row_index][0] += workload
         mutable_workloads[workload_card.row_index][1] += 1
@@ -521,6 +703,14 @@ def _slice_workload_values(
 def _intervals_by_card(
     collection: Any, workload_cards: Sequence[_WorkloadCard], logger: Logger
 ) -> dict[int, float]:
+    variable_batch_fn = getattr(
+        collection, "fsrs_interval_at_retrievability_variable_batch", None
+    )
+    if callable(variable_batch_fn):
+        return _intervals_by_card_variable_batch(
+            variable_batch_fn, workload_cards, logger
+        )
+
     batch_fn = getattr(collection, "fsrs_interval_at_retrievability_batch", None)
     if not callable(batch_fn):
         return _intervals_by_card_singular(collection, workload_cards, logger)
@@ -530,6 +720,7 @@ def _intervals_by_card(
     for workload_card in workload_cards:
         cards_by_retention[workload_card.desired_retention].append(workload_card)
 
+    started_at = perf_counter()
     for desired_retention, cards in cards_by_retention.items():
         try:
             batch_intervals = batch_fn(
@@ -547,6 +738,48 @@ def _intervals_by_card(
             if isinstance(interval, (int, float)):
                 intervals[int(card_id)] = float(interval)
 
+    logger.debug(
+        "field rule workload FSRS interval batches: cards=%s retention_groups=%s intervals=%s elapsed_ms=%s",
+        len(workload_cards),
+        len(cards_by_retention),
+        len(intervals),
+        _elapsed_ms(started_at),
+    )
+    return intervals
+
+
+def _intervals_by_card_variable_batch(
+    variable_batch_fn: Any, workload_cards: Sequence[_WorkloadCard], logger: Logger
+) -> dict[int, float]:
+    started_at = perf_counter()
+    try:
+        batch_intervals = variable_batch_fn(
+            [
+                (
+                    card.card_id,
+                    card.stability,
+                    card.desired_retention,
+                )
+                for card in workload_cards
+            ]
+        )
+    except Exception:
+        logger.exception(
+            "field rule workload variable FSRS batch interval calculation failed"
+        )
+        return {}
+
+    intervals: dict[int, float] = {}
+    for workload_card, interval in zip(workload_cards, batch_intervals):
+        if isinstance(interval, (int, float)):
+            intervals[workload_card.card_id] = float(interval)
+
+    logger.debug(
+        "field rule workload variable FSRS interval batch: cards=%s intervals=%s elapsed_ms=%s",
+        len(workload_cards),
+        len(intervals),
+        _elapsed_ms(started_at),
+    )
     return intervals
 
 
@@ -576,3 +809,7 @@ def _intervals_by_card_singular(
         if isinstance(interval, (int, float)):
             intervals[workload_card.card_id] = float(interval)
     return intervals
+
+
+def _elapsed_ms(started_at: float) -> float:
+    return (perf_counter() - started_at) * 1000

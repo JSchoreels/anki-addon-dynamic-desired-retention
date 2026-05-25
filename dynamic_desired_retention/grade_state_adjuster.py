@@ -68,6 +68,33 @@ def apply_grade_rules_to_scheduling_states(
     return changed
 
 
+def apply_interval_bounds_to_scheduling_states(
+    *,
+    states: Any,
+    minimum_interval: int | None,
+    maximum_interval: int | None,
+) -> bool:
+    if minimum_interval is None and maximum_interval is None:
+        return False
+
+    changed = False
+    for state_name in GRADE_STATE_NAMES.values():
+        state = getattr(states, state_name, None)
+        for review_state in _review_states(state):
+            scheduled_days = getattr(review_state, "scheduled_days", None)
+            if not isinstance(scheduled_days, int):
+                continue
+
+            bounded_days = _apply_interval_bounds(
+                scheduled_days, minimum_interval, maximum_interval
+            )
+            if bounded_days != scheduled_days:
+                review_state.scheduled_days = bounded_days
+                changed = True
+
+    return changed
+
+
 def _review_states(state: Any) -> list[Any]:
     normal = getattr(state, "normal", None)
     if normal is None:
@@ -156,4 +183,14 @@ def _scheduled_interval(raw_interval: float, max_interval: int | None) -> int:
     interval = max(1, int(raw_interval + 0.5))
     if max_interval is not None:
         interval = min(interval, max_interval)
+    return interval
+
+
+def _apply_interval_bounds(
+    interval: int, minimum_interval: int | None, maximum_interval: int | None
+) -> int:
+    if minimum_interval is not None:
+        interval = max(interval, minimum_interval)
+    if maximum_interval is not None:
+        interval = min(interval, maximum_interval)
     return interval

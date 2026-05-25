@@ -15,6 +15,8 @@ FieldValueType = Literal["number", "text"]
 class FieldThreshold:
     value: str
     desired_retention: float
+    minimum_interval: int | None = None
+    maximum_interval: int | None = None
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,8 @@ class FieldRule:
     relative_top_direction: FieldRelativeTopDirection = "lower"
     linear_between_thresholds: bool = False
     minimum_desired_retention: float | None = None
+    minimum_retention_minimum_interval: int | None = None
+    minimum_retention_maximum_interval: int | None = None
 
 
 def load_field_rules(config: dict[str, Any] | None, logger: Logger) -> list[FieldRule]:
@@ -63,15 +67,32 @@ def _field_rule_to_config(rule: FieldRule) -> dict[str, Any]:
         "value_type": rule.value_type,
         "linear_between_thresholds": rule.linear_between_thresholds,
         "thresholds": [
-            {
-                "value": threshold.value,
-                "desired_retention": threshold.desired_retention,
-            }
+            _field_threshold_to_config(threshold)
             for threshold in rule.thresholds
         ],
     }
     if rule.minimum_desired_retention is not None:
         config["minimum_desired_retention"] = rule.minimum_desired_retention
+    if rule.minimum_retention_minimum_interval is not None:
+        config["minimum_retention_minimum_interval"] = (
+            rule.minimum_retention_minimum_interval
+        )
+    if rule.minimum_retention_maximum_interval is not None:
+        config["minimum_retention_maximum_interval"] = (
+            rule.minimum_retention_maximum_interval
+        )
+    return config
+
+
+def _field_threshold_to_config(threshold: FieldThreshold) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "value": threshold.value,
+        "desired_retention": threshold.desired_retention,
+    }
+    if threshold.minimum_interval is not None:
+        config["minimum_interval"] = threshold.minimum_interval
+    if threshold.maximum_interval is not None:
+        config["maximum_interval"] = threshold.maximum_interval
     return config
 
 
@@ -89,6 +110,12 @@ def _load_field_rule(raw_rule: Any, index: int, logger: Logger) -> FieldRule | N
     value_type = raw_rule.get("value_type")
     linear_between_thresholds = raw_rule.get("linear_between_thresholds", False)
     minimum_desired_retention = raw_rule.get("minimum_desired_retention")
+    minimum_retention_minimum_interval = raw_rule.get(
+        "minimum_retention_minimum_interval"
+    )
+    minimum_retention_maximum_interval = raw_rule.get(
+        "minimum_retention_maximum_interval"
+    )
     raw_thresholds = raw_rule.get("thresholds")
 
     if not isinstance(note_type, str) or not note_type.strip():
@@ -165,6 +192,27 @@ def _load_field_rule(raw_rule: Any, index: int, logger: Logger) -> FieldRule | N
             )
             return None
 
+    minimum_retention_interval_bounds = _load_interval_bounds(
+        minimum_retention_minimum_interval,
+        minimum_retention_maximum_interval,
+        "minimum retention interval",
+        index,
+        None,
+        logger,
+    )
+    if minimum_retention_interval_bounds is None:
+        return None
+
+    if (
+        minimum_desired_retention is None
+        and minimum_retention_interval_bounds != (None, None)
+    ):
+        logger.warning(
+            "ignored field rule %s: minimum retention intervals require minimum_desired_retention",
+            index,
+        )
+        return None
+
     if not isinstance(raw_thresholds, list) or not raw_thresholds:
         logger.warning(
             "ignored field rule %s: thresholds must be a non-empty list", index
@@ -209,6 +257,8 @@ def _load_field_rule(raw_rule: Any, index: int, logger: Logger) -> FieldRule | N
             if minimum_desired_retention is not None
             else None
         ),
+        minimum_retention_minimum_interval=minimum_retention_interval_bounds[0],
+        minimum_retention_maximum_interval=minimum_retention_interval_bounds[1],
         thresholds=thresholds,
     )
 
@@ -267,6 +317,17 @@ def _load_field_threshold(
 
     raw_value = raw_threshold.get("value")
     desired_retention = raw_threshold.get("desired_retention")
+    interval_bounds = _load_interval_bounds(
+        raw_threshold.get("minimum_interval"),
+        raw_threshold.get("maximum_interval"),
+        "threshold interval",
+        rule_index,
+        threshold_index,
+        logger,
+    )
+    if interval_bounds is None:
+        return None
+
     value = normalize_field_threshold_value(raw_value, value_type, field_value_mode)
     if value is None:
         logger.warning(
@@ -297,6 +358,88 @@ def _load_field_threshold(
     return FieldThreshold(
         value=value,
         desired_retention=normalized_desired_retention,
+        minimum_interval=interval_bounds[0],
+        maximum_interval=interval_bounds[1],
+    )
+
+
+def _load_interval_bounds(
+    raw_minimum_interval: Any,
+    raw_maximum_interval: Any,
+    label: str,
+    rule_index: int,
+    threshold_index: int | None,
+    logger: Logger,
+) -> tuple[int | None, int | None] | None:
+    minimum_interval = _load_interval_bound(
+        raw_minimum_interval, "minimum", label, rule_index, threshold_index, logger
+    )
+    if minimum_interval is False:
+        return None
+
+    maximum_interval = _load_interval_bound(
+        raw_maximum_interval, "maximum", label, rule_index, threshold_index, logger
+    )
+    if maximum_interval is False:
+        return None
+
+    if (
+        minimum_interval is not None
+        and maximum_interval is not None
+        and maximum_interval < minimum_interval
+    ):
+        _log_interval_warning(
+            logger,
+            rule_index,
+            threshold_index,
+            f"{label} maximum_interval must be at least minimum_interval",
+        )
+        return None
+
+    return minimum_interval, maximum_interval
+
+
+def _load_interval_bound(
+    raw_interval: Any,
+    bound_name: str,
+    label: str,
+    rule_index: int,
+    threshold_index: int | None,
+    logger: Logger,
+) -> int | None | bool:
+    if raw_interval is None:
+        return None
+
+    if (
+        isinstance(raw_interval, bool)
+        or not isinstance(raw_interval, int)
+        or raw_interval < 1
+    ):
+        _log_interval_warning(
+            logger,
+            rule_index,
+            threshold_index,
+            f"{label} {bound_name}_interval must be a positive whole number of days",
+        )
+        return False
+
+    return raw_interval
+
+
+def _log_interval_warning(
+    logger: Logger,
+    rule_index: int,
+    threshold_index: int | None,
+    message: str,
+) -> None:
+    if threshold_index is None:
+        logger.warning("ignored field rule %s: %s", rule_index, message)
+        return
+    logger.warning(
+        "ignored field rule %s threshold %s: %s",
+        rule_index,
+        threshold_index,
+        message,
     )
 
 

@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Protocol
+
+
+@dataclass(frozen=True)
+class EffectiveDesiredRetention:
+    desired_retention: float | None
+    minimum_interval: int | None = None
+    maximum_interval: int | None = None
 
 
 class DesiredRetentionProvider(Protocol):
@@ -12,6 +20,15 @@ class DesiredRetentionProvider(Protocol):
         current_desired_retention: float | None,
         answer_grade: str | None = None,
     ) -> float | None: ...
+
+    def effective_desired_retention_info(
+        self,
+        *,
+        collection: Any,
+        card: Any,
+        current_desired_retention: float | None,
+        answer_grade: str | None = None,
+    ) -> EffectiveDesiredRetention: ...
 
 
 _provider: DesiredRetentionProvider | None = None
@@ -37,4 +54,33 @@ def effective_desired_retention(
         card=card,
         current_desired_retention=current_desired_retention,
         answer_grade=answer_grade,
+    )
+
+
+def effective_desired_retention_info(
+    *,
+    collection: Any,
+    card: Any,
+    current_desired_retention: float | None,
+    answer_grade: str | None = None,
+) -> EffectiveDesiredRetention:
+    if _provider is None:
+        return EffectiveDesiredRetention(current_desired_retention)
+
+    info_fn = getattr(_provider, "effective_desired_retention_info", None)
+    if callable(info_fn):
+        return info_fn(
+            collection=collection,
+            card=card,
+            current_desired_retention=current_desired_retention,
+            answer_grade=answer_grade,
+        )
+
+    return EffectiveDesiredRetention(
+        _provider.effective_desired_retention(
+            collection=collection,
+            card=card,
+            current_desired_retention=current_desired_retention,
+            answer_grade=answer_grade,
+        )
     )

@@ -93,14 +93,25 @@ def test_editor_reports_threshold_order_errors() -> None:
     }
 
 
+def test_editor_reports_interval_bound_errors() -> None:
+    rows = [
+        FieldThresholdRow("1000", "90", "10", "5"),
+        FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+    ]
+
+    assert _threshold_order_errors(rows, "number", "absolute", "lower") == {
+        0: "Max interval below min"
+    }
+
+
 def test_editor_converts_absolute_threshold_to_relative() -> None:
     assert _convert_threshold_row_value(
-        FieldThresholdRow("30", "90"),
+        FieldThresholdRow("30", "90", "2", "20"),
         "absolute",
         "relative",
         "lower",
         [10, 20, 30, 40, 50],
-    ) == FieldThresholdRow("Top 60%", "90")
+    ) == FieldThresholdRow("Top 60%", "90", "2", "20")
 
 
 def test_editor_converts_relative_threshold_to_absolute() -> None:

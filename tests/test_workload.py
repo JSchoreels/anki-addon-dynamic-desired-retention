@@ -44,19 +44,23 @@ class FakeCard:
         interval: float = 1,
         deck_id: int = 1,
         original_deck_id: int = 0,
+        note_id: int | None = None,
     ) -> None:
         self.id = card_id
+        self.nid = note_id if note_id is not None else card_id
         self.did = deck_id
         self.odid = original_deck_id
         self.ivl = interval
+        self.note_calls = 0
         self.memory_state = (
             FakeMemoryState(stability, stability_internal)
             if stability is not None
             else None
         )
-        self._note = FakeNote(card_id, "Japanese", {"Frequency": value})
+        self._note = FakeNote(self.nid, "Japanese", {"Frequency": value})
 
     def note(self) -> FakeNote:
+        self.note_calls += 1
         return self._note
 
 
@@ -105,6 +109,21 @@ class FakeCollection:
         }
 
 
+class FakeVariableBatchCollection(FakeCollection):
+    def __init__(self, cards: list[FakeCard]) -> None:
+        super().__init__(cards)
+        self.variable_batch_calls: list[list[tuple[int, float, float]]] = []
+
+    def fsrs_interval_at_retrievability_variable_batch(
+        self, items: list[tuple[int, float, float]]
+    ) -> list[float]:
+        self.variable_batch_calls.append(items)
+        return [
+            stability / target_retrievability
+            for _card_id, stability, target_retrievability in items
+        ]
+
+
 def test_field_rule_workload_sums_inverse_intervals_by_absolute_slice() -> None:
     collection = FakeCollection(
         [
@@ -140,6 +159,33 @@ def test_field_rule_workload_sums_inverse_intervals_by_absolute_slice() -> None:
     assert sum(workload.ratio for workload in workloads) == pytest.approx(1)
 
 
+def test_field_rule_workload_applies_slice_interval_bounds() -> None:
+    collection = FakeCollection(
+        [
+            FakeCard(1, "999", 10),
+            FakeCard(2, "2001", 50),
+        ]
+    )
+    workloads = field_rule_slice_workloads(
+        collection,
+        FieldRuleRow(
+            note_type="Japanese",
+            field="Frequency",
+            filter_query="",
+            value_type="number",
+            linear_between_thresholds=False,
+            thresholds=[
+                FieldThresholdRow("1000", "90", "20", ""),
+                FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50", "", "40"),
+            ],
+        ),
+        logging.getLogger("test"),
+    )
+
+    assert workloads[0].workload == pytest.approx(1 / 20)
+    assert workloads[1].workload == pytest.approx(1 / 40)
+
+
 def test_field_rule_workload_uses_linear_dr_inside_slice() -> None:
     collection = FakeCollection([FakeCard(1, "1500", 20)])
     workloads = field_rule_slice_workloads(
@@ -164,6 +210,105 @@ def test_field_rule_workload_uses_linear_dr_inside_slice() -> None:
     assert workloads[1].retention_workload == pytest.approx((1 / 24) * 0.85)
     assert collection.batch_calls[0][0] == pytest.approx(0.85)
     assert collection.batch_calls[0][1] == [(1, 20.0)]
+
+
+def test_field_rule_workload_logs_interval_retention_groups(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    collection = FakeCollection(
+        [
+            FakeCard(1, "1250", 20),
+            FakeCard(2, "1500", 20),
+            FakeCard(3, "1750", 20),
+        ]
+    )
+    logger = logging.getLogger("test.workload")
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        field_rule_slice_workloads(
+            collection,
+            FieldRuleRow(
+                note_type="Japanese",
+                field="Frequency",
+                filter_query="",
+                value_type="number",
+                linear_between_thresholds=True,
+                thresholds=[
+                    FieldThresholdRow("1000", "90"),
+                    FieldThresholdRow("2000", "80"),
+                    FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+                ],
+            ),
+            logger,
+        )
+
+    assert len(collection.batch_calls) == 3
+    assert "retention_groups=3" in caplog.text
+
+
+def test_field_rule_workload_uses_variable_interval_batch_when_available() -> None:
+    collection = FakeVariableBatchCollection(
+        [
+            FakeCard(1, "1250", 20),
+            FakeCard(2, "1500", 20),
+            FakeCard(3, "1750", 20),
+        ]
+    )
+
+    workloads = field_rule_slice_workloads(
+        collection,
+        FieldRuleRow(
+            note_type="Japanese",
+            field="Frequency",
+            filter_query="",
+            value_type="number",
+            linear_between_thresholds=True,
+            thresholds=[
+                FieldThresholdRow("1000", "90"),
+                FieldThresholdRow("2000", "80"),
+                FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+            ],
+        ),
+        logging.getLogger("test"),
+    )
+
+    assert [workload.card_count for workload in workloads] == [0, 3, 0]
+    assert len(collection.variable_batch_calls) == 1
+    assert collection.batch_calls == []
+    assert [(card_id, stability) for card_id, stability, _dr in collection.variable_batch_calls[0]] == [
+        (1, 20.0),
+        (2, 20.0),
+        (3, 20.0),
+    ]
+    assert [
+        desired_retention
+        for _card_id, _stability, desired_retention in collection.variable_batch_calls[0]
+    ] == pytest.approx([0.875, 0.85, 0.825])
+
+
+def test_field_rule_workload_reuses_note_field_data_for_sibling_cards() -> None:
+    first_card = FakeCard(1, "999", 10, note_id=100)
+    second_card = FakeCard(2, "999", 20, note_id=100)
+    collection = FakeCollection([first_card, second_card])
+
+    workloads = field_rule_slice_workloads(
+        collection,
+        FieldRuleRow(
+            note_type="Japanese",
+            field="Frequency",
+            filter_query="",
+            value_type="number",
+            linear_between_thresholds=False,
+            thresholds=[
+                FieldThresholdRow("1000", "90"),
+                FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+            ],
+        ),
+        logging.getLogger("test"),
+    )
+
+    assert workloads[0].card_count == 2
+    assert first_card.note_calls + second_card.note_calls == 1
 
 
 def test_field_rule_workload_prefers_internal_stability() -> None:

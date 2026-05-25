@@ -28,6 +28,8 @@ MINIMUM_RETENTION_VALUE = "Minimum Retention"
 class FieldThresholdRow:
     value: str
     desired_retention_percent: str
+    minimum_interval_days: str = ""
+    maximum_interval_days: str = ""
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,8 @@ class FieldRuleRow:
     field_value_mode: str = "absolute"
     relative_top_direction: str = "lower"
     minimum_desired_retention_percent: str = ""
+    minimum_retention_minimum_interval_days: str = ""
+    minimum_retention_maximum_interval_days: str = ""
 
 
 def field_rules_from_table_rows(rows: Sequence[FieldRuleRow]) -> list[FieldRule]:
@@ -68,12 +72,32 @@ def table_rows_from_field_rules(field_rules: Sequence[FieldRule]) -> list[FieldR
                         threshold.value, rule.field_value_mode
                     ),
                     desired_retention_percent=f"{threshold.desired_retention * 100:g}",
+                    minimum_interval_days=(
+                        str(threshold.minimum_interval)
+                        if threshold.minimum_interval is not None
+                        else ""
+                    ),
+                    maximum_interval_days=(
+                        str(threshold.maximum_interval)
+                        if threshold.maximum_interval is not None
+                        else ""
+                    ),
                 )
                 for threshold in rule.thresholds
             ],
             minimum_desired_retention_percent=(
                 f"{rule.minimum_desired_retention * 100:g}"
                 if rule.minimum_desired_retention is not None
+                else ""
+            ),
+            minimum_retention_minimum_interval_days=(
+                str(rule.minimum_retention_minimum_interval)
+                if rule.minimum_retention_minimum_interval is not None
+                else ""
+            ),
+            minimum_retention_maximum_interval_days=(
+                str(rule.minimum_retention_maximum_interval)
+                if rule.minimum_retention_maximum_interval is not None
                 else ""
             ),
         )
@@ -121,7 +145,11 @@ def _field_rule_from_table_row(row: FieldRuleRow, row_number: int) -> FieldRule:
             f"Field rule {row_number}: text rules cannot use linear interpolation."
         )
 
-    normal_threshold_rows, minimum_desired_retention = _split_threshold_rows(
+    (
+        normal_threshold_rows,
+        minimum_desired_retention,
+        minimum_interval_bounds,
+    ) = _split_threshold_rows(
         row, row_number
     )
     thresholds = _thresholds_from_table_rows(
@@ -148,6 +176,8 @@ def _field_rule_from_table_row(row: FieldRuleRow, row_number: int) -> FieldRule:
         value_type=value_type,
         linear_between_thresholds=row.linear_between_thresholds,
         minimum_desired_retention=minimum_desired_retention,
+        minimum_retention_minimum_interval=minimum_interval_bounds[0],
+        minimum_retention_maximum_interval=minimum_interval_bounds[1],
         thresholds=thresholds,
     )
 
@@ -171,6 +201,8 @@ def threshold_rows_for_display(row: FieldRuleRow) -> list[FieldThresholdRow]:
             FieldThresholdRow(
                 value=MINIMUM_RETENTION_VALUE,
                 desired_retention_percent=row.minimum_desired_retention_percent,
+                minimum_interval_days=row.minimum_retention_minimum_interval_days,
+                maximum_interval_days=row.minimum_retention_maximum_interval_days,
             )
         ]
 
@@ -223,6 +255,9 @@ def _thresholds_from_table_rows(
             )
         seen_values.add(duplicate_key)
 
+        interval_bounds = _interval_bounds_from_threshold_row(
+            row, field_rule_number, f"threshold {threshold_number}"
+        )
         thresholds.append(
             FieldThreshold(
                 value=normalized_value,
@@ -231,6 +266,8 @@ def _thresholds_from_table_rows(
                     field_rule_number,
                     threshold_number,
                 ),
+                minimum_interval=interval_bounds[0],
+                maximum_interval=interval_bounds[1],
             )
         )
 
@@ -346,7 +383,7 @@ def _threshold_value_for_display(value: str, field_value_mode: FieldValueMode) -
 
 def _split_threshold_rows(
     row: FieldRuleRow, row_number: int
-) -> tuple[list[FieldThresholdRow], float | None]:
+) -> tuple[list[FieldThresholdRow], float | None, tuple[int | None, int | None]]:
     minimum_rows = [
         threshold for threshold in row.thresholds if is_minimum_retention_row(threshold)
     ]
@@ -368,12 +405,26 @@ def _split_threshold_rows(
     minimum_desired_retention = _minimum_desired_retention_from_table_row(
         row, row_number
     )
+    minimum_interval_bounds = _interval_bounds_from_table_row(
+        row.minimum_retention_minimum_interval_days,
+        row.minimum_retention_maximum_interval_days,
+        row_number,
+        "minimum retention",
+    )
     if minimum_rows:
         minimum_desired_retention = _minimum_desired_retention_from_threshold_row(
             minimum_rows[0], row, row_number
         )
+        minimum_interval_bounds = _interval_bounds_from_threshold_row(
+            minimum_rows[0], row_number, "minimum retention"
+        )
 
-    return normal_rows, minimum_desired_retention
+    if minimum_desired_retention is None and minimum_interval_bounds != (None, None):
+        raise FieldRuleTableError(
+            f"Field rule {row_number}: minimum retention intervals require minimum retention."
+        )
+
+    return normal_rows, minimum_desired_retention, minimum_interval_bounds
 
 
 def _threshold_desired_retention(
@@ -385,6 +436,66 @@ def _threshold_desired_retention(
         raise FieldRuleTableError(
             f"Field rule {field_rule_number} threshold {threshold_number}: desired retention must be a percentage greater than 0 and at most 100."
         ) from exc
+
+
+def _interval_bounds_from_threshold_row(
+    row: FieldThresholdRow, field_rule_number: int, label: str
+) -> tuple[int | None, int | None]:
+    return _interval_bounds_from_table_row(
+        row.minimum_interval_days,
+        row.maximum_interval_days,
+        field_rule_number,
+        label,
+    )
+
+
+def _interval_bounds_from_table_row(
+    minimum_interval: str,
+    maximum_interval: str,
+    field_rule_number: int,
+    label: str,
+) -> tuple[int | None, int | None]:
+    parsed_minimum = _interval_bound_from_table_value(
+        minimum_interval, field_rule_number, label, "minimum"
+    )
+    parsed_maximum = _interval_bound_from_table_value(
+        maximum_interval, field_rule_number, label, "maximum"
+    )
+    if (
+        parsed_minimum is not None
+        and parsed_maximum is not None
+        and parsed_maximum < parsed_minimum
+    ):
+        raise FieldRuleTableError(
+            f"Field rule {field_rule_number}: {label} maximum interval must be at least the minimum interval."
+        )
+
+    return parsed_minimum, parsed_maximum
+
+
+def _interval_bound_from_table_value(
+    value: str,
+    field_rule_number: int,
+    label: str,
+    bound_name: str,
+) -> int | None:
+    stripped_value = value.strip()
+    if not stripped_value:
+        return None
+
+    try:
+        interval = int(stripped_value)
+    except ValueError as exc:
+        raise FieldRuleTableError(
+            f"Field rule {field_rule_number}: {label} {bound_name} interval must be a positive whole number of days."
+        ) from exc
+
+    if interval < 1 or str(interval) != stripped_value:
+        raise FieldRuleTableError(
+            f"Field rule {field_rule_number}: {label} {bound_name} interval must be a positive whole number of days."
+        )
+
+    return interval
 
 
 def _minimum_desired_retention_from_table_row(

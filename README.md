@@ -5,8 +5,9 @@ Anki search rules, note-field threshold rules and answer-button grade rules.
 
 This add-on targets Anki builds that expose
 `gui_hooks.reviewer_will_compute_desired_retention`. Grade rules additionally
-require `gui_hooks.reviewer_will_update_scheduling_states`, so they can adjust
-per-button scheduling states before answer button intervals are rendered.
+require `gui_hooks.reviewer_will_update_scheduling_states`, as do field-rule
+interval bounds, so they can adjust per-button scheduling states before answer
+button intervals are rendered.
 
 Configure rules in Anki's add-on config:
 
@@ -29,10 +30,14 @@ Configure rules in Anki's add-on config:
       "value_type": "number",
       "linear_between_thresholds": false,
       "minimum_desired_retention": 0.5,
+      "minimum_retention_minimum_interval": 30,
+      "minimum_retention_maximum_interval": 365,
       "thresholds": [
         {
           "value": "1000",
-          "desired_retention": 0.9
+          "desired_retention": 0.9,
+          "minimum_interval": 2,
+          "maximum_interval": 30
         },
         {
           "value": "20000",
@@ -60,6 +65,8 @@ relative percentile thresholds such as `Top 10%`. Numeric field rules include a
 field values can receive the higher desired retention. The editor keeps numeric
 thresholds sorted, validates desired-retention order, and always includes a
 `Minimum Retention` row for values beyond the least-important threshold.
+Each slice can also set optional minimum and maximum intervals in days; the
+add-on clamps the in-memory review scheduling states for the matched field slice.
 `Scope Filter` limits the cards a field rule can apply to, while
 `Exclusion (Search query)` skips matching cards.
 Conflicting threshold rows are highlighted in the editor. The threshold table

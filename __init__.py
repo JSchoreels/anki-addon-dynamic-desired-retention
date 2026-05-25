@@ -6,12 +6,18 @@ import sys
 try:
     from . import dynamic_desired_retention as _stable_package
     from .dynamic_desired_retention import api as _stable_api
-    from .dynamic_desired_retention.api import effective_desired_retention
+    from .dynamic_desired_retention.api import (
+        effective_desired_retention,
+        effective_desired_retention_info,
+    )
 
     sys.modules.setdefault("dynamic_desired_retention", _stable_package)
     sys.modules.setdefault("dynamic_desired_retention.api", _stable_api)
 except ImportError:
-    from dynamic_desired_retention.api import effective_desired_retention
+    from dynamic_desired_retention.api import (
+        effective_desired_retention,
+        effective_desired_retention_info,
+    )
 
 try:
     from .dynamic_desired_retention.addon import setup
@@ -22,4 +28,4 @@ except Exception:
         "failed to initialize Dynamic Desired Retention"
     )
 
-__all__ = ["effective_desired_retention"]
+__all__ = ["effective_desired_retention", "effective_desired_retention_info"]

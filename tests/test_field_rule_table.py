@@ -142,8 +142,8 @@ def test_field_rules_from_table_rows_accepts_minimum_special_threshold_row() -> 
                 value_type="number",
                 linear_between_thresholds=False,
                 thresholds=[
-                    FieldThresholdRow("1000", "90"),
-                    FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+                    FieldThresholdRow("1000", "90", "2", "20"),
+                    FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50", "30", "365"),
                 ],
             )
         ]
@@ -154,10 +154,32 @@ def test_field_rules_from_table_rows_accepts_minimum_special_threshold_row() -> 
             note_type="Japanese",
             field="Frequency",
             value_type="number",
-            thresholds=[FieldThreshold("1000", 0.9)],
+            thresholds=[
+                FieldThreshold(
+                    "1000", 0.9, minimum_interval=2, maximum_interval=20
+                )
+            ],
             minimum_desired_retention=0.5,
+            minimum_retention_minimum_interval=30,
+            minimum_retention_maximum_interval=365,
         )
     ]
+
+
+def test_field_rules_from_table_rows_rejects_invalid_interval_bounds() -> None:
+    with pytest.raises(FieldRuleTableError, match="maximum interval"):
+        field_rules_from_table_rows(
+            [
+                FieldRuleRow(
+                    note_type="Japanese",
+                    field="Frequency",
+                    filter_query="",
+                    value_type="number",
+                    linear_between_thresholds=False,
+                    thresholds=[FieldThresholdRow("1000", "90", "10", "5")],
+                )
+            ]
+        )
 
 
 def test_field_rules_from_table_rows_accepts_minimum_for_linear_rules() -> None:
@@ -391,10 +413,11 @@ def test_table_rows_from_field_rules_displays_percentages() -> None:
                 value_type="number",
                 linear_between_thresholds=False,
                 thresholds=[
-                    FieldThreshold("1000", 0.9),
+                    FieldThreshold("1000", 0.9, minimum_interval=2),
                     FieldThreshold("2000", 0.8),
                 ],
                 minimum_desired_retention=0.5,
+                minimum_retention_maximum_interval=365,
             )
         ]
     ) == [
@@ -405,10 +428,11 @@ def test_table_rows_from_field_rules_displays_percentages() -> None:
             value_type="number",
             linear_between_thresholds=False,
             thresholds=[
-                FieldThresholdRow("1000", "90"),
+                FieldThresholdRow("1000", "90", "2", ""),
                 FieldThresholdRow("2000", "80"),
             ],
             minimum_desired_retention_percent="50",
+            minimum_retention_maximum_interval_days="365",
         )
     ]
 

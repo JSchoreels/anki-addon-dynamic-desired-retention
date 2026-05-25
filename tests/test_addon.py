@@ -8,7 +8,7 @@ from anki.scheduler_pb2 import SchedulingStates
 import dynamic_desired_retention.addon as addon_module
 from dynamic_desired_retention.addon import DynamicDesiredRetentionAddon
 from dynamic_desired_retention.grade_state_adjuster import _review_stability
-from dynamic_desired_retention.config import GradeRule, Rule
+from dynamic_desired_retention.config import FieldRule, FieldThreshold, GradeRule, Rule
 from dynamic_desired_retention.matcher import DesiredRetentionMatcher
 
 
@@ -45,6 +45,21 @@ class FakeCard:
     def current_deck_id(self) -> int:
         return 1
 
+    def note(self) -> object:
+        return FakeNote()
+
+
+class FakeNote:
+    id = 456
+
+    def note_type(self) -> dict[str, str]:
+        return {"name": "Japanese"}
+
+    def __getitem__(self, field: str) -> str:
+        if field == "Frequency":
+            return "999"
+        raise KeyError(field)
+
 
 def test_addon_updates_answer_button_state_for_absolute_grade_rule() -> None:
     logger = logging.getLogger("test")
@@ -64,6 +79,34 @@ def test_addon_updates_answer_button_state_for_absolute_grade_rule() -> None:
 
     assert returned_states is reviewer._v3.states
     assert reviewer._v3.states.again.normal.review.scheduled_days == 1
+
+
+def test_addon_clamps_answer_button_state_for_field_slice_interval_bounds() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._field_rule_interval_bounds_enabled = True
+    addon._matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                value_type="number",
+                thresholds=[
+                    FieldThreshold("1000", 0.9, minimum_interval=10),
+                ],
+            )
+        ],
+        logger,
+    )
+    reviewer = FakeReviewer()
+
+    returned_states = addon.update_scheduling_states(
+        reviewer._v3.states, reviewer, reviewer.card
+    )
+
+    assert returned_states is reviewer._v3.states
+    assert reviewer._v3.states.again.normal.review.scheduled_days == 10
 
 
 def test_review_stability_prefers_internal_stability() -> None:

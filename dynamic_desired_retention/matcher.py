@@ -33,6 +33,8 @@ class FieldRuleMatch:
     match_value: float | str
     slice_label: str
     linear_between_thresholds: bool
+    minimum_interval: int | None = None
+    maximum_interval: int | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,24 @@ class DesiredRetentionMatch:
     desired_retention: float
     source: str
     details: str
+    minimum_interval: int | None = None
+    maximum_interval: int | None = None
+
+
+@dataclass(frozen=True)
+class _NumericThreshold:
+    value: float
+    desired_retention: float
+    minimum_interval: int | None
+    maximum_interval: int | None
+
+
+@dataclass(frozen=True)
+class _NumericMatch:
+    desired_retention: float | None
+    slice_label: str
+    minimum_interval: int | None = None
+    maximum_interval: int | None = None
 
 
 class DesiredRetentionMatcher:
@@ -129,7 +149,8 @@ class DesiredRetentionMatcher:
                     (
                         "field rule %s matched card %s; note_type=%s field=%s "
                         "value_type=%s value_mode=%s raw_value=%s match_value=%s "
-                        "slice=%s linear=%s desired_retention=%s"
+                        "slice=%s linear=%s desired_retention=%s min_interval=%s "
+                        "max_interval=%s"
                     ),
                     index,
                     card.id,
@@ -142,11 +163,15 @@ class DesiredRetentionMatcher:
                     match.slice_label,
                     match.linear_between_thresholds,
                     _format_number(match.desired_retention),
+                    match.minimum_interval,
+                    match.maximum_interval,
                 )
                 return DesiredRetentionMatch(
                     desired_retention=match.desired_retention,
                     source="field",
                     details=_format_field_rule_match_details(rule, match),
+                    minimum_interval=match.minimum_interval,
+                    maximum_interval=match.maximum_interval,
                 )
 
         return None
@@ -284,32 +309,35 @@ class DesiredRetentionMatcher:
             desired_retention_order = rule.relative_top_direction
 
         numeric_thresholds = _numeric_thresholds(rule.thresholds)
+        minimum_threshold = _minimum_retention_threshold(rule)
         if rule.linear_between_thresholds:
-            desired_retention, slice_label = _linear_desired_retention_match(
+            match = _linear_desired_retention_match(
                 match_value,
                 numeric_thresholds,
-                rule.minimum_desired_retention,
+                minimum_threshold,
                 desired_retention_order,
             )
         else:
-            desired_retention, slice_label = _step_desired_retention_match(
+            match = _step_desired_retention_match(
                 match_value,
                 numeric_thresholds,
-                rule.minimum_desired_retention,
+                minimum_threshold,
                 desired_retention_order,
             )
 
-        if desired_retention is None:
+        if match.desired_retention is None:
             return None
 
         return FieldRuleMatch(
-            desired_retention=desired_retention,
+            desired_retention=match.desired_retention,
             value_type=rule.value_type,
             field_value_mode=rule.field_value_mode,
             raw_field_value=field_value,
             match_value=match_value,
-            slice_label=slice_label,
+            slice_label=match.slice_label,
             linear_between_thresholds=rule.linear_between_thresholds,
+            minimum_interval=match.minimum_interval,
+            maximum_interval=match.maximum_interval,
         )
 
     def _top_percentile_for_value(
@@ -473,101 +501,171 @@ def _field_rule_match_for_text_value(
                 match_value=field_value,
                 slice_label=f'value == "{threshold.value}"',
                 linear_between_thresholds=False,
+                minimum_interval=threshold.minimum_interval,
+                maximum_interval=threshold.maximum_interval,
             )
     return None
 
 
-def _numeric_thresholds(thresholds: list[FieldThreshold]) -> list[tuple[float, float]]:
+def _numeric_thresholds(thresholds: list[FieldThreshold]) -> list[_NumericThreshold]:
     return sorted(
-        (float(threshold.value), threshold.desired_retention)
-        for threshold in thresholds
+        (
+            _NumericThreshold(
+                value=float(threshold.value),
+                desired_retention=threshold.desired_retention,
+                minimum_interval=threshold.minimum_interval,
+                maximum_interval=threshold.maximum_interval,
+            )
+            for threshold in thresholds
+        ),
+        key=lambda threshold: threshold.value,
+    )
+
+
+def _minimum_retention_threshold(rule: FieldRule) -> _NumericThreshold | None:
+    if rule.minimum_desired_retention is None:
+        return None
+    return _NumericThreshold(
+        value=0,
+        desired_retention=rule.minimum_desired_retention,
+        minimum_interval=rule.minimum_retention_minimum_interval,
+        maximum_interval=rule.minimum_retention_maximum_interval,
     )
 
 
 def _linear_desired_retention_match(
     value: float,
-    thresholds: list[tuple[float, float]],
-    minimum_desired_retention: float | None,
+    thresholds: list[_NumericThreshold],
+    minimum_threshold: _NumericThreshold | None,
     desired_retention_order: str,
-) -> tuple[float | None, str]:
+) -> _NumericMatch:
     if not thresholds:
-        return None, "no thresholds"
+        return _NumericMatch(None, "no thresholds")
 
-    lowest_value, lowest_retention = thresholds[0]
-    if value < lowest_value:
-        if desired_retention_order == "higher" and minimum_desired_retention is not None:
-            return minimum_desired_retention, f"< {_format_number(lowest_value)} minimum"
-        return lowest_retention, f"< {_format_number(lowest_value)}"
+    lowest_threshold = thresholds[0]
+    if value < lowest_threshold.value:
+        if desired_retention_order == "higher" and minimum_threshold is not None:
+            return _numeric_match_from_threshold(
+                minimum_threshold, f"< {_format_number(lowest_threshold.value)} minimum"
+            )
+        return _numeric_match_from_threshold(
+            lowest_threshold, f"< {_format_number(lowest_threshold.value)}"
+        )
 
-    highest_value, highest_retention = thresholds[-1]
-    if value > highest_value:
-        if desired_retention_order == "lower" and minimum_desired_retention is not None:
-            return minimum_desired_retention, f"> {_format_number(highest_value)} minimum"
-        return highest_retention, f"> {_format_number(highest_value)}"
+    highest_threshold = thresholds[-1]
+    if value > highest_threshold.value:
+        if desired_retention_order == "lower" and minimum_threshold is not None:
+            return _numeric_match_from_threshold(
+                minimum_threshold,
+                f"> {_format_number(highest_threshold.value)} minimum",
+            )
+        return _numeric_match_from_threshold(
+            highest_threshold, f"> {_format_number(highest_threshold.value)}"
+        )
 
-    for (lower_value, lower_retention), (
-        upper_value,
-        upper_retention,
-    ) in zip(thresholds, thresholds[1:]):
-        if lower_value < value < upper_value:
-            ratio = (value - lower_value) / (upper_value - lower_value)
-            return (
-                lower_retention + ratio * (upper_retention - lower_retention),
-                f"{_format_number(lower_value)}..{_format_number(upper_value)}",
+    for lower_threshold, upper_threshold in zip(thresholds, thresholds[1:]):
+        if lower_threshold.value < value < upper_threshold.value:
+            ratio = (value - lower_threshold.value) / (
+                upper_threshold.value - lower_threshold.value
+            )
+            desired_retention = lower_threshold.desired_retention + ratio * (
+                upper_threshold.desired_retention - lower_threshold.desired_retention
+            )
+            slice_threshold = (
+                lower_threshold
+                if desired_retention_order == "higher"
+                else upper_threshold
+            )
+            return _numeric_match_from_threshold(
+                slice_threshold,
+                (
+                    f"{_format_number(lower_threshold.value)}.."
+                    f"{_format_number(upper_threshold.value)}"
+                ),
+                desired_retention,
             )
 
-    return None, "no matching slice"
+    return _NumericMatch(None, "no matching slice")
 
 
 def _linear_desired_retention(
     value: float,
-    thresholds: list[tuple[float, float]],
-    minimum_desired_retention: float | None,
+    thresholds: list[_NumericThreshold],
+    minimum_threshold: _NumericThreshold | None,
     desired_retention_order: str,
 ) -> float | None:
     return _linear_desired_retention_match(
-        value, thresholds, minimum_desired_retention, desired_retention_order
-    )[0]
+        value, thresholds, minimum_threshold, desired_retention_order
+    ).desired_retention
 
 
 def _step_desired_retention_match(
     value: float,
-    thresholds: list[tuple[float, float]],
-    minimum_desired_retention: float | None,
+    thresholds: list[_NumericThreshold],
+    minimum_threshold: _NumericThreshold | None,
     desired_retention_order: str,
-) -> tuple[float | None, str]:
+) -> _NumericMatch:
     if not thresholds:
-        return None, "no thresholds"
+        return _NumericMatch(None, "no thresholds")
 
     if desired_retention_order == "higher":
-        for threshold_value, desired_retention in reversed(thresholds):
-            if value >= threshold_value:
-                return desired_retention, f">= {_format_number(threshold_value)}"
+        for threshold in reversed(thresholds):
+            if value >= threshold.value:
+                return _numeric_match_from_threshold(
+                    threshold, f">= {_format_number(threshold.value)}"
+                )
 
-        if minimum_desired_retention is not None:
-            return minimum_desired_retention, f"< {_format_number(thresholds[0][0])} minimum"
+        if minimum_threshold is not None:
+            return _numeric_match_from_threshold(
+                minimum_threshold, f"< {_format_number(thresholds[0].value)} minimum"
+            )
 
-        return thresholds[0][1], f"< {_format_number(thresholds[0][0])}"
+        return _numeric_match_from_threshold(
+            thresholds[0], f"< {_format_number(thresholds[0].value)}"
+        )
 
-    for threshold_value, desired_retention in thresholds:
-        if value <= threshold_value:
-            return desired_retention, f"<= {_format_number(threshold_value)}"
+    for threshold in thresholds:
+        if value <= threshold.value:
+            return _numeric_match_from_threshold(
+                threshold, f"<= {_format_number(threshold.value)}"
+            )
 
-    if minimum_desired_retention is not None:
-        return minimum_desired_retention, f"> {_format_number(thresholds[-1][0])} minimum"
+    if minimum_threshold is not None:
+        return _numeric_match_from_threshold(
+            minimum_threshold, f"> {_format_number(thresholds[-1].value)} minimum"
+        )
 
-    return thresholds[-1][1], f"> {_format_number(thresholds[-1][0])}"
+    return _numeric_match_from_threshold(
+        thresholds[-1], f"> {_format_number(thresholds[-1].value)}"
+    )
 
 
 def _step_desired_retention(
     value: float,
-    thresholds: list[tuple[float, float]],
-    minimum_desired_retention: float | None,
+    thresholds: list[_NumericThreshold],
+    minimum_threshold: _NumericThreshold | None,
     desired_retention_order: str,
 ) -> float | None:
     return _step_desired_retention_match(
-        value, thresholds, minimum_desired_retention, desired_retention_order
-    )[0]
+        value, thresholds, minimum_threshold, desired_retention_order
+    ).desired_retention
+
+
+def _numeric_match_from_threshold(
+    threshold: _NumericThreshold,
+    slice_label: str,
+    desired_retention: float | None = None,
+) -> _NumericMatch:
+    return _NumericMatch(
+        desired_retention=(
+            threshold.desired_retention
+            if desired_retention is None
+            else desired_retention
+        ),
+        slice_label=slice_label,
+        minimum_interval=threshold.minimum_interval,
+        maximum_interval=threshold.maximum_interval,
+    )
 
 
 def _format_number(value: float | str) -> str:
@@ -579,21 +677,33 @@ def _format_number(value: float | str) -> str:
 def _format_field_rule_match_details(rule: FieldRule, match: FieldRuleMatch) -> str:
     field = f"{rule.note_type}.{rule.field}"
     search_scope = _format_field_rule_search_scope(rule)
+    interval_bounds = _format_interval_bounds(match)
     if match.value_type == "number" and match.field_value_mode == "relative":
         return (
             f"{field}{search_scope}: value {_format_number(match.raw_field_value)} "
             f"is Top {_format_number(match.match_value)}%; "
-            f"matched slice Top {match.slice_label}"
+            f"matched slice Top {match.slice_label}{interval_bounds}"
         )
     if match.value_type == "number":
         return (
             f"{field}{search_scope}: value {_format_number(match.raw_field_value)}; "
-            f"matched slice {match.slice_label}"
+            f"matched slice {match.slice_label}{interval_bounds}"
         )
     return (
         f"{field}{search_scope}: value {_format_number(match.raw_field_value)}; "
-        f"matched value {_format_number(match.match_value)}"
+        f"matched value {_format_number(match.match_value)}{interval_bounds}"
     )
+
+
+def _format_interval_bounds(match: FieldRuleMatch) -> str:
+    parts = []
+    if match.minimum_interval is not None:
+        parts.append(f"min interval {match.minimum_interval}d")
+    if match.maximum_interval is not None:
+        parts.append(f"max interval {match.maximum_interval}d")
+    if not parts:
+        return ""
+    return f" ({'; '.join(parts)})"
 
 
 def _format_field_rule_search_scope(rule: FieldRule) -> str:

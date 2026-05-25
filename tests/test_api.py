@@ -5,7 +5,9 @@ import sys
 from pathlib import Path
 
 from dynamic_desired_retention.api import (
+    EffectiveDesiredRetention,
     effective_desired_retention,
+    effective_desired_retention_info,
     set_desired_retention_provider,
 )
 
@@ -20,6 +22,20 @@ class Provider:
         answer_grade: str | None = None,
     ) -> float | None:
         return card.desired_retention
+
+    def effective_desired_retention_info(
+        self,
+        *,
+        collection,
+        card,
+        current_desired_retention: float | None,
+        answer_grade: str | None = None,
+    ) -> EffectiveDesiredRetention:
+        return EffectiveDesiredRetention(
+            desired_retention=card.desired_retention,
+            minimum_interval=2,
+            maximum_interval=30,
+        )
 
 
 class Card:
@@ -50,6 +66,41 @@ def test_effective_desired_retention_uses_provider() -> None:
         )
         == 0.95
     )
+
+
+def test_effective_desired_retention_info_uses_provider() -> None:
+    set_desired_retention_provider(Provider())
+
+    assert effective_desired_retention_info(
+        collection=object(),
+        card=Card(),
+        current_desired_retention=0.9,
+    ) == EffectiveDesiredRetention(
+        desired_retention=0.95,
+        minimum_interval=2,
+        maximum_interval=30,
+    )
+
+
+def test_effective_desired_retention_info_wraps_legacy_provider() -> None:
+    class LegacyProvider:
+        def effective_desired_retention(
+            self,
+            *,
+            collection,
+            card,
+            current_desired_retention: float | None,
+            answer_grade: str | None = None,
+        ) -> float | None:
+            return 0.8
+
+    set_desired_retention_provider(LegacyProvider())
+
+    assert effective_desired_retention_info(
+        collection=object(),
+        card=Card(),
+        current_desired_retention=0.9,
+    ) == EffectiveDesiredRetention(desired_retention=0.8)
 
 
 def test_effective_desired_retention_passes_answer_grade_to_provider() -> None:
@@ -91,6 +142,7 @@ def test_addon_root_exports_effective_desired_retention() -> None:
     spec.loader.exec_module(module)
 
     assert callable(module.effective_desired_retention)
+    assert callable(module.effective_desired_retention_info)
 
 
 def test_addon_root_exposes_stable_import_alias() -> None:
@@ -113,6 +165,9 @@ def test_addon_root_exposes_stable_import_alias() -> None:
 
         assert callable(
             sys.modules["dynamic_desired_retention"].effective_desired_retention
+        )
+        assert callable(
+            sys.modules["dynamic_desired_retention"].effective_desired_retention_info
         )
         assert callable(
             sys.modules["dynamic_desired_retention.api"].effective_desired_retention

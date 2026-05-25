@@ -170,11 +170,13 @@ class FieldRulesEditor(QWidget):
         threshold_controls.addWidget(self._remove_threshold_button)
         editor_layout.addLayout(threshold_controls)
 
-        self._threshold_table = QTableWidget(0, 4)
+        self._threshold_table = QTableWidget(0, 6)
         self._threshold_table.setHorizontalHeaderLabels(
             [
                 _threshold_value_header(""),
                 "Desired retention (%)",
+                "Min interval (days)",
+                "Max interval (days)",
                 "Workload (review/day)",
                 "Workload Ratio",
             ]
@@ -196,6 +198,12 @@ class FieldRulesEditor(QWidget):
         )
         self._threshold_table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self._threshold_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.Stretch
+        )
+        self._threshold_table.horizontalHeader().setSectionResizeMode(
+            5, QHeaderView.ResizeMode.ResizeToContents
         )
         editor_layout.addWidget(self._threshold_table)
 
@@ -420,8 +428,14 @@ class FieldRulesEditor(QWidget):
             self._threshold_table.setItem(
                 row, 1, QTableWidgetItem(threshold.desired_retention_percent)
             )
-            self._set_read_only_threshold_item(row, 2, "")
-            self._set_read_only_threshold_item(row, 3, "")
+            self._threshold_table.setItem(
+                row, 2, QTableWidgetItem(threshold.minimum_interval_days)
+            )
+            self._threshold_table.setItem(
+                row, 3, QTableWidgetItem(threshold.maximum_interval_days)
+            )
+            self._set_read_only_threshold_item(row, 4, "")
+            self._set_read_only_threshold_item(row, 5, "")
         if thresholds:
             self._threshold_table.setCurrentCell(0, 0)
         self._refresh_threshold_errors()
@@ -518,8 +532,10 @@ class FieldRulesEditor(QWidget):
         self._threshold_table.insertRow(row)
         self._threshold_table.setItem(row, 0, QTableWidgetItem(""))
         self._threshold_table.setItem(row, 1, QTableWidgetItem("90"))
-        self._set_read_only_threshold_item(row, 2, "")
-        self._set_read_only_threshold_item(row, 3, "")
+        self._threshold_table.setItem(row, 2, QTableWidgetItem(""))
+        self._threshold_table.setItem(row, 3, QTableWidgetItem(""))
+        self._set_read_only_threshold_item(row, 4, "")
+        self._set_read_only_threshold_item(row, 5, "")
         self._threshold_table.setCurrentCell(row, 0)
         self._update_current_field_rule()
 
@@ -551,7 +567,7 @@ class FieldRulesEditor(QWidget):
         row = item.row()
         column = item.column()
         text = item.text()
-        if column not in (0, 1):
+        if column not in (0, 1, 2, 3):
             return
 
         if column == 0:
@@ -569,7 +585,16 @@ class FieldRulesEditor(QWidget):
             if normalized and normalized != text:
                 self._normalizing_threshold_item = True
                 try:
-                    item.setText(normalized)
+                        item.setText(normalized)
+                finally:
+                    self._normalizing_threshold_item = False
+
+        if column in (2, 3):
+            normalized_interval = _normalize_interval_days(text)
+            if normalized_interval is not None and normalized_interval != text:
+                self._normalizing_threshold_item = True
+                try:
+                    item.setText(normalized_interval)
                 finally:
                     self._normalizing_threshold_item = False
 
@@ -615,6 +640,8 @@ class FieldRulesEditor(QWidget):
             FieldThresholdRow(
                 value=self._threshold_item_text(row, 0),
                 desired_retention_percent=self._threshold_item_text(row, 1),
+                minimum_interval_days=self._threshold_item_text(row, 2),
+                maximum_interval_days=self._threshold_item_text(row, 3),
             )
             for row in range(self._threshold_table.rowCount())
         ]
@@ -636,6 +663,8 @@ class FieldRulesEditor(QWidget):
             [
                 _threshold_value_header(field_name),
                 "Desired retention (%)",
+                "Min interval (days)",
+                "Max interval (days)",
                 "Workload (review/day)",
                 "Workload Ratio",
             ]
@@ -679,8 +708,10 @@ class FieldRulesEditor(QWidget):
         self._threshold_table.insertRow(row)
         self._threshold_table.setItem(row, 0, self._minimum_retention_item())
         self._threshold_table.setItem(row, 1, QTableWidgetItem("50"))
-        self._set_read_only_threshold_item(row, 2, "")
-        self._set_read_only_threshold_item(row, 3, "")
+        self._threshold_table.setItem(row, 2, QTableWidgetItem(""))
+        self._threshold_table.setItem(row, 3, QTableWidgetItem(""))
+        self._set_read_only_threshold_item(row, 4, "")
+        self._set_read_only_threshold_item(row, 5, "")
 
     def _sort_threshold_table(self) -> None:
         sorted_rows = _sorted_threshold_rows(
@@ -718,7 +749,7 @@ class FieldRulesEditor(QWidget):
                     item = self._threshold_table.item(row, column)
                     if item is None:
                         item = QTableWidgetItem("")
-                        if column >= 2:
+                        if column >= 4:
                             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                         self._threshold_table.setItem(row, column, item)
                     item.setBackground(brush)
@@ -814,8 +845,8 @@ class FieldRulesEditor(QWidget):
         self._normalizing_threshold_item = True
         try:
             for table_row in range(self._threshold_table.rowCount()):
-                self._set_read_only_threshold_item(table_row, 2, "...")
-                self._set_read_only_threshold_item(table_row, 3, "...")
+                self._set_read_only_threshold_item(table_row, 4, "...")
+                self._set_read_only_threshold_item(table_row, 5, "...")
             self._total_workload_label.setText("Total Workload: ... (Current: ...)")
             self._expected_retention_label.setText("Expected Retention: ...")
         finally:
@@ -834,10 +865,10 @@ class FieldRulesEditor(QWidget):
                     else SliceWorkload(0, 0, 0)
                 )
                 self._set_read_only_threshold_item(
-                    table_row, 2, _format_workload(workload.workload)
+                    table_row, 4, _format_workload(workload.workload)
                 )
                 self._set_read_only_threshold_item(
-                    table_row, 3, _format_workload_ratio(workload.ratio)
+                    table_row, 5, _format_workload_ratio(workload.ratio)
                 )
             self._set_workload_summary(workloads)
         finally:
@@ -917,6 +948,8 @@ class FieldRulesEditor(QWidget):
         rows[row] = FieldThresholdRow(
             value=MINIMUM_RETENTION_VALUE,
             desired_retention_percent=rows[row].desired_retention_percent or "50",
+            minimum_interval_days=rows[row].minimum_interval_days,
+            maximum_interval_days=rows[row].maximum_interval_days,
         )
         normalized_rows = threshold_rows_for_display(
             FieldRuleRow(
@@ -969,6 +1002,12 @@ def _copy_field_rule_row(row: FieldRuleRow) -> FieldRuleRow:
         linear_between_thresholds=row.linear_between_thresholds,
         thresholds=list(row.thresholds),
         minimum_desired_retention_percent=row.minimum_desired_retention_percent,
+        minimum_retention_minimum_interval_days=(
+            row.minimum_retention_minimum_interval_days
+        ),
+        minimum_retention_maximum_interval_days=(
+            row.minimum_retention_maximum_interval_days
+        ),
     )
 
 
@@ -984,7 +1023,12 @@ def _workload_signature(row: FieldRuleRow) -> tuple[object, ...]:
         row.linear_between_thresholds,
         row.minimum_desired_retention_percent,
         tuple(
-            (threshold.value, threshold.desired_retention_percent)
+            (
+                threshold.value,
+                threshold.desired_retention_percent,
+                threshold.minimum_interval_days,
+                threshold.maximum_interval_days,
+            )
             for threshold in row.thresholds
         ),
     )
@@ -1045,8 +1089,9 @@ def _threshold_order_errors(
     field_value_mode: str,
     relative_top_direction: str,
 ) -> dict[int, str]:
+    errors = _interval_bound_errors(rows)
     if value_type != "number":
-        return {}
+        return errors
 
     ordered_rows = _indexed_sorted_threshold_rows(
         rows, field_value_mode, relative_top_direction
@@ -1057,9 +1102,11 @@ def _threshold_order_errors(
         if not is_minimum_retention_row(row)
     ]
     if len(normal_rows) < 2:
-        return _minimum_retention_errors(rows, [row for _index, row in normal_rows])
+        errors.update(
+            _minimum_retention_errors(rows, [row for _index, row in normal_rows])
+        )
+        return errors
 
-    errors: dict[int, str] = {}
     _previous_index, previous_row = normal_rows[0]
     previous_retention = _desired_retention_percent(previous_row)
     for row_index, row in normal_rows[1:]:
@@ -1073,6 +1120,26 @@ def _threshold_order_errors(
         previous_retention = current_retention
 
     errors.update(_minimum_retention_errors(rows, [row for _index, row in normal_rows]))
+    return errors
+
+
+def _interval_bound_errors(rows: list[FieldThresholdRow]) -> dict[int, str]:
+    errors: dict[int, str] = {}
+    for index, row in enumerate(rows):
+        minimum_interval = _interval_days(row.minimum_interval_days)
+        maximum_interval = _interval_days(row.maximum_interval_days)
+        if row.minimum_interval_days.strip() and minimum_interval is None:
+            errors[index] = "Min interval must be days"
+            continue
+        if row.maximum_interval_days.strip() and maximum_interval is None:
+            errors[index] = "Max interval must be days"
+            continue
+        if (
+            minimum_interval is not None
+            and maximum_interval is not None
+            and maximum_interval < minimum_interval
+        ):
+            errors[index] = "Max interval below min"
     return errors
 
 
@@ -1143,6 +1210,30 @@ def _desired_retention_percent(row: FieldThresholdRow) -> float | None:
         return None
 
 
+def _normalize_interval_days(value: str) -> str | None:
+    if not value.strip():
+        return ""
+
+    interval = _interval_days(value)
+    return str(interval) if interval is not None else None
+
+
+def _interval_days(value: str) -> int | None:
+    stripped_value = value.strip()
+    if not stripped_value:
+        return None
+
+    try:
+        interval = int(stripped_value)
+    except ValueError:
+        return None
+
+    if interval < 1:
+        return None
+    return interval
+
+
+
 def _first_row_with_value(rows: list[FieldThresholdRow], value: str) -> int:
     for index, row in enumerate(rows):
         if row.value == value:
@@ -1171,6 +1262,8 @@ def _convert_threshold_row_value(
         return FieldThresholdRow(
             value=f"Top {percentile:g}%",
             desired_retention_percent=row.desired_retention_percent,
+            minimum_interval_days=row.minimum_interval_days,
+            maximum_interval_days=row.maximum_interval_days,
         )
 
     if old_mode == "relative" and new_mode == "absolute":
@@ -1183,6 +1276,8 @@ def _convert_threshold_row_value(
         return FieldThresholdRow(
             value=f"{absolute_value:g}",
             desired_retention_percent=row.desired_retention_percent,
+            minimum_interval_days=row.minimum_interval_days,
+            maximum_interval_days=row.maximum_interval_days,
         )
 
     return row
