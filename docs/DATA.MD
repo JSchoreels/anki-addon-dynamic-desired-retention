@@ -242,6 +242,13 @@ for the configured query and the current card id together:
 The add-on only reads search results. It does not create, update, or delete
 collection data.
 
+Field-rule `scope_query` and `filter_query` searches are read once per rule and
+cached as card-id sets for the current matcher cache lifetime. This avoids
+running `<scope/filter query> AND cid:<current card id>` for every card during
+bulk operations such as FSRS Helper rescheduling. Relative field-rule
+populations are cached separately for the same matcher cache lifetime. Reloading
+the add-on config clears these in-memory caches.
+
 ## Card Info Read
 
 When Anki provides the `card_info_will_add_rows` GUI hook, the add-on evaluates
@@ -250,6 +257,16 @@ display-only rows for the live dynamic desired retention match. This reads the
 same card, note, note type, field values and search results used during review,
 but does not write to collection storage and does not use the card's previously
 stored desired retention.
+
+When Anki exposes Dynamic DR information on scheduling states, Card Info also
+reads fresh scheduling states for the matched desired retention override and
+displays the mapping from the requested desired retention to Again, Hard, Good
+and Easy ADR retentions. This covers both deck-option Dynamic DR and add-on FSRS
+preset overlays. If Anki reports Dynamic DR is enabled but provides no ADR
+mapping, such as when the requested retention uses the fixed-DR fallback path,
+Card Info displays that the requested retention maps to fixed DR. Older Anki
+builds that do not expose the mapping do not get the extra row. This is
+read-only scheduler access and does not update cards, revlog, or config.
 
 If no rule matches, the hook returns the incoming desired retention value. In the
 normal Anki hook path this is `None`, which tells Anki to compute the base
@@ -327,12 +344,18 @@ positive relative: base + value * (1 - base)
 negative relative: base + value * base
 ```
 
-The adjusted desired retention is converted to a scheduled interval with Anki's
-FSRS interval API and written to the matching grade state, such as `again`,
-`hard`, `good`, or `easy`. This makes the answer-button label and the state
-Anki persists agree. If no base desired retention is available, a relative grade
-rule is skipped and the add-on logs that skip at debug level. Absolute grade
-rules do not need a base desired retention.
+When the card's deck preset has core Dynamic DR enabled, the add-on asks Anki's
+scheduler for a fresh scheduling-state set for each grade-rule target desired
+retention and copies the matching grade state. This keeps native Dynamic DR
+policy calculation in Anki core. Otherwise, the adjusted desired retention is
+converted to a scheduled interval with Anki's FSRS interval API and written to
+the matching grade state, such as `again`, `hard`, `good`, or `easy`.
+
+When the user answers, the add-on also updates the reviewer's
+`desired_retention_override` to the selected grade's adjusted desired retention.
+That value is passed into Anki's normal answer flow. If no base desired retention
+is available, a relative grade rule is skipped and the add-on logs that skip at
+debug level. Absolute grade rules do not need a base desired retention.
 
 ## External Resolver Read
 
@@ -355,3 +378,13 @@ slice's `minimum_interval` and `maximum_interval` values when those bounds are
 configured. Search rules and field slices without interval bounds return no
 bounds. This is also read-only collection access; callers remain responsible for
 applying bounds to their own scheduling updates.
+
+Bulk callers such as FSRS Helper can call
+`dynamic_desired_retention.effective_desired_retention_info_for_cards()` with a
+sequence of cards and a mapping of card id to base desired retention. The add-on
+evaluates ordered search rules and field rules for the whole batch, returning
+one `EffectiveDesiredRetention` per card id. Search rules, field-rule scope
+searches, field-rule exclusion searches, and relative percentile populations are
+resolved once per rule for the batch instead of once per card. The bulk API is
+read-only and returns the same desired-retention and interval-bound shape as
+`effective_desired_retention_info()`.

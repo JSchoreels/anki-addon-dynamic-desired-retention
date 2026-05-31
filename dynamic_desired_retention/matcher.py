@@ -75,6 +75,9 @@ class DesiredRetentionMatcher:
         self._grade_rules = grade_rules or []
         self._logger = logger
         self._relative_population_cache: dict[tuple[int, int], list[float] | None] = {}
+        self._field_rule_search_cache: dict[
+            tuple[int, int, str], set[int] | None
+        ] = {}
 
     def desired_retention_for_card(
         self,
@@ -176,6 +179,70 @@ class DesiredRetentionMatcher:
 
         return None
 
+    def base_desired_retention_matches_for_cards(
+        self,
+        *,
+        collection: SearchCollection,
+        cards: Sequence[Card],
+    ) -> dict[int, DesiredRetentionMatch]:
+        matches: dict[int, DesiredRetentionMatch] = {}
+        cards_by_id = {card.id: card for card in cards}
+        unmatched_card_ids = set(cards_by_id)
+
+        for index, rule in enumerate(self._rules):
+            matching_card_ids = self._rule_matching_card_ids(collection, rule, index)
+            if matching_card_ids is None:
+                continue
+            matched_ids = unmatched_card_ids & matching_card_ids
+            if not matched_ids:
+                continue
+            match = DesiredRetentionMatch(
+                desired_retention=rule.desired_retention,
+                source="search",
+                details=rule.query,
+            )
+            for card_id in matched_ids:
+                matches[card_id] = match
+            unmatched_card_ids -= matched_ids
+            self._logger.debug(
+                "rule %s matched %s cards in bulk; desired retention=%s",
+                index,
+                len(matched_ids),
+                rule.desired_retention,
+            )
+            if not unmatched_card_ids:
+                return matches
+
+        for index, rule in enumerate(self._field_rules):
+            matched_count = 0
+            for card_id in list(unmatched_card_ids):
+                field_match = self._match_field_rule(
+                    collection, cards_by_id[card_id], rule, index
+                )
+                if field_match is None:
+                    continue
+                matches[card_id] = DesiredRetentionMatch(
+                    desired_retention=field_match.desired_retention,
+                    source="field",
+                    details=_format_field_rule_match_details(rule, field_match),
+                    minimum_interval=field_match.minimum_interval,
+                    maximum_interval=field_match.maximum_interval,
+                )
+                unmatched_card_ids.remove(card_id)
+                matched_count += 1
+            if matched_count:
+                self._logger.debug(
+                    "field rule %s matched %s cards in bulk; note_type=%s field=%s",
+                    index,
+                    matched_count,
+                    rule.note_type,
+                    rule.field,
+                )
+            if not unmatched_card_ids:
+                break
+
+        return matches
+
     def _matches_rule(
         self, collection: SearchCollection, card_id: int, rule: Rule, index: int
     ) -> bool:
@@ -185,6 +252,16 @@ class DesiredRetentionMatcher:
         except Exception:
             self._logger.exception("rule %s search failed: %s", index, rule.query)
             return False
+
+    def _rule_matching_card_ids(
+        self, collection: SearchCollection, rule: Rule, index: int
+    ) -> set[int] | None:
+        try:
+            search = collection.build_search_string(rule.query)
+            return {int(card_id) for card_id in collection.find_cards(search, order=False)}
+        except Exception:
+            self._logger.exception("rule %s search failed: %s", index, rule.query)
+            return None
 
     def _match_field_rule(
         self,
@@ -252,14 +329,13 @@ class DesiredRetentionMatcher:
         rule: FieldRule,
         index: int,
     ) -> bool:
-        try:
-            search = collection.build_search_string(rule.scope_query, f"cid:{card_id}")
-            return bool(collection.find_cards(search, order=False))
-        except Exception:
-            self._logger.exception(
-                "field rule %s scope search failed: %s", index, rule.scope_query
-            )
-            return False
+        card_ids = self._field_rule_search_card_ids(
+            collection=collection,
+            query=rule.scope_query,
+            index=index,
+            cache_kind="scope",
+        )
+        return card_ids is not None and card_id in card_ids
 
     def _matches_field_rule_exclusion(
         self,
@@ -268,14 +344,44 @@ class DesiredRetentionMatcher:
         rule: FieldRule,
         index: int,
     ) -> bool:
+        card_ids = self._field_rule_search_card_ids(
+            collection=collection,
+            query=rule.filter_query,
+            index=index,
+            cache_kind="exclusion",
+        )
+        return card_ids is not None and card_id in card_ids
+
+    def _field_rule_search_card_ids(
+        self,
+        *,
+        collection: SearchCollection,
+        query: str,
+        index: int,
+        cache_kind: str,
+    ) -> set[int] | None:
+        cache_key = (id(collection), index, cache_kind)
+        if cache_key in self._field_rule_search_cache:
+            return self._field_rule_search_cache[cache_key]
+
         try:
-            search = collection.build_search_string(rule.filter_query, f"cid:{card_id}")
-            return bool(collection.find_cards(search, order=False))
+            search = collection.build_search_string(query)
+            card_ids = {int(card_id) for card_id in collection.find_cards(search, order=False)}
         except Exception:
             self._logger.exception(
-                "field rule %s exclusion search failed: %s", index, rule.filter_query
+                "field rule %s %s search failed: %s", index, cache_kind, query
             )
-            return False
+            self._field_rule_search_cache[cache_key] = None
+            return None
+
+        self._field_rule_search_cache[cache_key] = card_ids
+        self._logger.debug(
+            "field rule %s cached %s cards for %s search",
+            index,
+            len(card_ids),
+            cache_kind,
+        )
+        return card_ids
 
     def _field_rule_match_for_numeric_value(
         self,
@@ -406,6 +512,7 @@ class DesiredRetentionMatcher:
 
     def clear_cache(self) -> None:
         self._relative_population_cache.clear()
+        self._field_rule_search_cache.clear()
 
 
 def _note_type_name(note: object) -> str | None:

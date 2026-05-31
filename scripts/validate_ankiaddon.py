@@ -28,6 +28,7 @@ REQUIRED_FILES = {
     "dynamic_desired_retention/grade_rules_editor.py",
     "dynamic_desired_retention/grade_state_adjuster.py",
     "dynamic_desired_retention/matcher.py",
+    "dynamic_desired_retention/native_scheduler.py",
     "dynamic_desired_retention/rule_table.py",
     "dynamic_desired_retention/threshold_slider.py",
     "dynamic_desired_retention/ui.py",

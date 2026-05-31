@@ -17,8 +17,25 @@ class FakeDecks:
         return {"rev": {"maxIvl": 36500}}
 
 
+class FakeScheduler:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def get_scheduling_states(
+        self, card_id: int, desired_retention_override: float | None = None
+    ) -> SchedulingStates:
+        self.calls.append((card_id, desired_retention_override))
+        states = _states_with_again_review()
+        if desired_retention_override == 0.99:
+            states.again.normal.review.scheduled_days = 1
+        return states
+
+
 class FakeCollection:
     decks = FakeDecks()
+
+    def __init__(self) -> None:
+        self.sched = FakeScheduler()
 
     def build_search_string(self, *nodes: str, joiner: str = "AND") -> str:
         return f" {joiner} ".join(nodes)
@@ -37,6 +54,7 @@ class FakeReviewer:
         self.mw = type("MainWindow", (), {"col": FakeCollection()})()
         self.card = FakeCard()
         self._v3 = type("V3", (), {"states": _states_with_again_review()})()
+        self._desired_retention_override = None
 
 
 class FakeCard:
@@ -79,6 +97,55 @@ def test_addon_updates_answer_button_state_for_absolute_grade_rule() -> None:
 
     assert returned_states is reviewer._v3.states
     assert reviewer._v3.states.again.normal.review.scheduled_days == 1
+
+
+def test_addon_recomputes_answer_state_with_core_dynamic_dr() -> None:
+    class DynamicAdrDecks:
+        def config_dict_for_deck_id(self, deck_id: int) -> dict:
+            return {
+                "rev": {"maxIvl": 36500},
+                "fsrsDynamicDesiredRetentionEnabled": True,
+            }
+
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = [GradeRule("again", "absolute", 0.99)]
+    addon._matcher = DesiredRetentionMatcher(
+        [Rule("note:Japanese", 0.6)],
+        [],
+        logger,
+        grade_rules=[GradeRule("again", "absolute", 0.99)],
+    )
+    reviewer = FakeReviewer()
+    reviewer.mw.col.decks = DynamicAdrDecks()
+
+    returned_states = addon.update_scheduling_states(
+        reviewer._v3.states, reviewer, reviewer.card
+    )
+
+    assert returned_states is reviewer._v3.states
+    assert reviewer._v3.states.again.normal.review.scheduled_days == 1
+    assert (123, 0.99) in reviewer.mw.col.sched.calls
+
+
+def test_addon_updates_answer_override_for_grade_rule() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = [GradeRule("again", "absolute", 0.99)]
+    addon._matcher = DesiredRetentionMatcher(
+        [Rule("note:Japanese", 0.6)],
+        [],
+        logger,
+        grade_rules=[GradeRule("again", "absolute", 0.99)],
+    )
+    reviewer = FakeReviewer()
+
+    returned_answer = addon.update_answer_desired_retention(
+        (True, 1), reviewer, reviewer.card
+    )
+
+    assert returned_answer == (True, 1)
+    assert reviewer._desired_retention_override == 0.99
 
 
 def test_addon_clamps_answer_button_state_for_field_slice_interval_bounds() -> None:
@@ -142,6 +209,119 @@ def test_addon_adds_dynamic_dr_card_info_rows(monkeypatch) -> None:
         ("Dynamic DR", "0.60"),
         ("Dynamic DR Match", "search: note:Japanese"),
     ]
+
+
+def test_addon_adds_dynamic_adr_card_info_row(monkeypatch) -> None:
+    class DynamicAdrScheduler:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def get_scheduling_states(
+            self, card_id: int, desired_retention_override: float | None = None
+        ) -> object:
+            self.calls.append((card_id, desired_retention_override))
+            return SimpleNamespace(
+                dynamic_desired_retentions=[0.7, 0.8, 0.9, 0.95],
+            )
+
+    class DynamicAdrCollection(FakeCollection):
+        def __init__(self) -> None:
+            self.sched = DynamicAdrScheduler()
+
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._matcher = DesiredRetentionMatcher(
+        [Rule("note:Japanese", 0.6)],
+        [],
+        logger,
+    )
+    collection = DynamicAdrCollection()
+    rows = []
+
+    monkeypatch.setattr(
+        addon_module,
+        "mw",
+        SimpleNamespace(col=collection),
+    )
+
+    addon.add_card_info_rows(rows, FakeCard())
+
+    assert [(row.label, row.value) for row in rows] == [
+        ("Dynamic DR", "0.60"),
+        ("Dynamic DR Match", "search: note:Japanese"),
+        (
+            "Dynamic ADR",
+            "60.00% -> Again 70.00%, Hard 80.00%, Good 90.00%, Easy 95.00%",
+        ),
+    ]
+    assert collection.sched.calls == [(123, 0.6)]
+
+
+def test_addon_adds_fixed_dr_card_info_row_for_custom_dynamic_dr_fallback(
+    monkeypatch,
+) -> None:
+    class FixedDrFallbackScheduler:
+        def get_scheduling_states(
+            self, card_id: int, desired_retention_override: float | None = None
+        ) -> object:
+            return SimpleNamespace(
+                dynamic_desired_retention_enabled=True,
+                dynamic_desired_retentions=[],
+            )
+
+    class FixedDrFallbackCollection(FakeCollection):
+        def __init__(self) -> None:
+            self.sched = FixedDrFallbackScheduler()
+
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._matcher = DesiredRetentionMatcher(
+        [Rule("note:Japanese", 0.6)],
+        [],
+        logger,
+    )
+    rows = []
+
+    monkeypatch.setattr(
+        addon_module,
+        "mw",
+        SimpleNamespace(col=FixedDrFallbackCollection()),
+    )
+
+    addon.add_card_info_rows(rows, FakeCard())
+
+    assert [(row.label, row.value) for row in rows] == [
+        ("Dynamic DR", "0.60"),
+        ("Dynamic DR Match", "search: note:Japanese"),
+        ("Dynamic ADR", "60.00% -> fixed DR"),
+    ]
+
+
+def test_addon_bulk_effective_desired_retention_info() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                value_type="number",
+                thresholds=[FieldThreshold("1000", 0.9, minimum_interval=2)],
+            )
+        ],
+        logger,
+    )
+    cards = [FakeCard()]
+
+    results = addon.effective_desired_retention_info_for_cards(
+        collection=FakeCollection(),
+        cards=cards,
+        current_desired_retentions={123: 0.7},
+    )
+
+    assert results[123].desired_retention == 0.9
+    assert results[123].minimum_interval == 2
 
 
 def _states_with_again_review() -> SchedulingStates:

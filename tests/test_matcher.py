@@ -705,8 +705,8 @@ def test_relative_numeric_field_rule_uses_filter_for_population() -> None:
 
     desired_retention = matcher.desired_retention_for_card(
         collection=FakeCollection(
-            matching_searches={"deck:Filtered AND cid:4"},
             search_results={
+                "deck:Filtered": [4],
                 "deck:Filtered AND note:\"Japanese\"": [card.id for card in cards]
             },
             cards=cards,
@@ -822,7 +822,7 @@ def test_field_rule_scope_filter_allows_matching_card() -> None:
     )
 
     desired_retention = matcher.desired_retention_for_card(
-        collection=FakeCollection({"deck:Filtered AND cid:123"}),
+        collection=FakeCollection(search_results={"deck:Filtered": [123]}),
         card=FakeCard(fields={"Priority": "High"}),
         current_desired_retention=0.7,
     )
@@ -846,9 +846,107 @@ def test_field_rule_exclusion_filter_skips_matching_card() -> None:
     )
 
     desired_retention = matcher.desired_retention_for_card(
-        collection=FakeCollection({"tag:excluded AND cid:123"}),
+        collection=FakeCollection(search_results={"tag:excluded": [123]}),
         card=FakeCard(fields={"Priority": "High"}),
         current_desired_retention=0.7,
     )
 
     assert desired_retention == 0.7
+
+
+def test_field_rule_scope_and_filter_searches_are_cached() -> None:
+    cards = [
+        FakeCard(card_id=1, fields={"Priority": "High"}),
+        FakeCard(card_id=2, fields={"Priority": "High"}),
+        FakeCard(card_id=3, fields={"Priority": "High"}),
+    ]
+    collection = FakeCollection(
+        search_results={
+            "deck:Filtered": [1, 2, 3],
+            "tag:excluded": [3],
+        },
+        cards=cards,
+    )
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Priority",
+                scope_query="deck:Filtered",
+                filter_query="tag:excluded",
+                value_type="text",
+                thresholds=[FieldThreshold("High", 0.95)],
+            )
+        ],
+        logging.getLogger("test"),
+    )
+
+    assert (
+        matcher.desired_retention_for_card(
+            collection=collection,
+            card=cards[0],
+            current_desired_retention=0.7,
+        )
+        == 0.95
+    )
+    assert (
+        matcher.desired_retention_for_card(
+            collection=collection,
+            card=cards[1],
+            current_desired_retention=0.7,
+        )
+        == 0.95
+    )
+    assert (
+        matcher.desired_retention_for_card(
+            collection=collection,
+            card=cards[2],
+            current_desired_retention=0.7,
+        )
+        == 0.7
+    )
+
+    assert collection.searched.count("deck:Filtered") == 1
+    assert collection.searched.count("tag:excluded") == 1
+    assert "deck:Filtered AND cid:1" not in collection.searched
+
+
+def test_base_desired_retention_matches_for_cards_uses_bulk_rule_search() -> None:
+    cards = [FakeCard(card_id=1), FakeCard(card_id=2), FakeCard(card_id=3)]
+    collection = FakeCollection(
+        search_results={
+            "tag:priority": [2],
+            "deck:Filtered": [1, 3],
+        },
+        cards=cards,
+    )
+    matcher = DesiredRetentionMatcher(
+        [Rule(query="tag:priority", desired_retention=0.95)],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Priority",
+                scope_query="deck:Filtered",
+                value_type="text",
+                thresholds=[FieldThreshold("High", 0.9)],
+            )
+        ],
+        logging.getLogger("test"),
+    )
+
+    matches = matcher.base_desired_retention_matches_for_cards(
+        collection=collection,
+        cards=[
+            FakeCard(card_id=1, fields={"Priority": "High"}),
+            FakeCard(card_id=2, fields={"Priority": "High"}),
+            FakeCard(card_id=3, fields={"Priority": "High"}),
+        ],
+    )
+
+    assert matches[1].desired_retention == 0.9
+    assert matches[2].desired_retention == 0.95
+    assert matches[3].desired_retention == 0.9
+    assert collection.searched.count("tag:priority") == 1
+    assert collection.searched.count("deck:Filtered") == 1
+    assert "tag:priority AND cid:2" not in collection.searched

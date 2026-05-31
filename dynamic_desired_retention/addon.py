@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from logging import Logger
 from types import SimpleNamespace
 from typing import Any
@@ -17,12 +18,16 @@ from .config import (
     load_grade_rules,
     load_rules,
 )
-from .grade_rules import Grade, apply_grade_rule
+from .grade_rules import Grade, apply_grade_rule, grade_from_ease
 from .grade_state_adjuster import (
     apply_grade_rules_to_scheduling_states,
     apply_interval_bounds_to_scheduling_states,
 )
 from .matcher import DesiredRetentionMatcher
+from .native_scheduler import (
+    apply_grade_rules_with_scheduler_states,
+    core_dynamic_desired_retention_enabled,
+)
 from .ui import RulesTableDialog
 
 
@@ -55,6 +60,9 @@ class DynamicDesiredRetentionAddon:
             self._logger.warning(
                 "grade rules and field interval bounds require reviewer_will_update_scheduling_states"
             )
+        answer_hook = getattr(gui_hooks, "reviewer_will_answer_card", None)
+        if answer_hook is not None:
+            answer_hook.append(self.update_answer_desired_retention)
         card_info_hook = getattr(gui_hooks, "card_info_will_add_rows", None)
         if card_info_hook is not None:
             card_info_hook.append(self.add_card_info_rows)
@@ -116,6 +124,44 @@ class DynamicDesiredRetentionAddon:
             ),
         )
 
+    def effective_desired_retention_info_for_cards(
+        self,
+        *,
+        collection: Any,
+        cards: Sequence[Any],
+        current_desired_retentions: Mapping[int, float | None],
+        answer_grades: Mapping[int, Grade | None] | None = None,
+    ) -> dict[int, EffectiveDesiredRetention]:
+        base_matches = self._matcher.base_desired_retention_matches_for_cards(
+            collection=collection,
+            cards=cards,
+        )
+        answer_grades = answer_grades or {}
+        results: dict[int, EffectiveDesiredRetention] = {}
+        for card in cards:
+            base_match = base_matches.get(card.id)
+            desired_retention = (
+                base_match.desired_retention
+                if base_match is not None
+                else current_desired_retentions.get(card.id)
+            )
+            adjusted_desired_retention = apply_grade_rule(
+                desired_retention=desired_retention,
+                grade=answer_grades.get(card.id),
+                grade_rules=self._grade_rules,
+                logger=self._logger,
+            )
+            results[card.id] = EffectiveDesiredRetention(
+                desired_retention=adjusted_desired_retention,
+                minimum_interval=(
+                    base_match.minimum_interval if base_match is not None else None
+                ),
+                maximum_interval=(
+                    base_match.maximum_interval if base_match is not None else None
+                ),
+            )
+        return results
+
     def update_scheduling_states(self, states: Any, reviewer: Any, card: Any) -> Any:
         if not self._grade_rules and not self._field_rule_interval_bounds_enabled:
             return states
@@ -145,14 +191,28 @@ class DynamicDesiredRetentionAddon:
 
         changed = False
         if self._grade_rules:
-            changed = apply_grade_rules_to_scheduling_states(
+            if core_dynamic_desired_retention_enabled(
                 collection=collection,
                 card=card,
-                states=states,
-                base_desired_retention=base_desired_retention,
-                grade_rules=self._grade_rules,
                 logger=self._logger,
-            )
+            ):
+                changed = apply_grade_rules_with_scheduler_states(
+                    collection=collection,
+                    card=card,
+                    states=states,
+                    base_desired_retention=base_desired_retention,
+                    grade_rules=self._grade_rules,
+                    logger=self._logger,
+                )
+            else:
+                changed = apply_grade_rules_to_scheduling_states(
+                    collection=collection,
+                    card=card,
+                    states=states,
+                    base_desired_retention=base_desired_retention,
+                    grade_rules=self._grade_rules,
+                    logger=self._logger,
+                )
         if base_match is not None:
             changed = (
                 apply_interval_bounds_to_scheduling_states(
@@ -169,6 +229,41 @@ class DynamicDesiredRetentionAddon:
                 card.id,
             )
         return states
+
+    def update_answer_desired_retention(
+        self, answer: tuple[bool, int], reviewer: Any, card: Any
+    ) -> tuple[bool, int]:
+        proceed, ease = answer
+        if not proceed or not self._grade_rules:
+            return answer
+
+        grade = grade_from_ease(ease)
+        if grade is None:
+            return answer
+
+        collection = getattr(getattr(reviewer, "mw", None), "col", None)
+        if collection is None:
+            return answer
+
+        base_desired_retention = getattr(
+            reviewer, "_desired_retention_override", None
+        )
+        if base_desired_retention is None:
+            base_desired_retention = self._matcher.base_desired_retention_for_card(
+                collection=collection,
+                card=card,
+                current_desired_retention=None,
+            )
+
+        desired_retention = apply_grade_rule(
+            desired_retention=base_desired_retention,
+            grade=grade,
+            grade_rules=self._grade_rules,
+            logger=self._logger,
+        )
+        if desired_retention is not None:
+            reviewer._desired_retention_override = desired_retention
+        return answer
 
     def add_card_info_rows(self, rows: list[Any], card: Any) -> None:
         if mw is None or mw.col is None:
@@ -193,6 +288,19 @@ class DynamicDesiredRetentionAddon:
                 value=f"{match.source}: {match.details}",
             )
         )
+        adr_mapping = _card_info_adr_mapping_value(
+            collection=mw.col,
+            card=card,
+            desired_retention=match.desired_retention,
+            logger=self._logger,
+        )
+        if adr_mapping is not None:
+            rows.append(
+                _card_info_row(
+                    label="Dynamic ADR",
+                    value=adr_mapping,
+                )
+            )
 
     def _on_config_updated(self, _config: Any) -> None:
         self._reload_config()
@@ -273,3 +381,58 @@ def _card_info_row(label: str, value: str) -> Any:
         return SimpleNamespace(label=label, value=value)
 
     return CardInfoRow(label=label, value=value)
+
+
+def _card_info_adr_mapping_value(
+    *,
+    collection: Any,
+    card: Any,
+    desired_retention: float,
+    logger: Logger,
+) -> str | None:
+    scheduler = getattr(collection, "sched", None)
+    get_scheduling_states = getattr(scheduler, "get_scheduling_states", None)
+    if not callable(get_scheduling_states):
+        logger.debug("Card Info ADR mapping skipped: scheduling-state API unavailable")
+        return None
+
+    try:
+        states = get_scheduling_states(
+            card.id,
+            desired_retention_override=desired_retention,
+        )
+    except Exception:
+        logger.debug(
+            "Card Info ADR mapping skipped: scheduling-state read failed for card %s",
+            getattr(card, "id", None),
+            exc_info=True,
+        )
+        return None
+
+    if not hasattr(states, "dynamic_desired_retentions"):
+        return None
+
+    retentions = list(getattr(states, "dynamic_desired_retentions"))
+    requested = _format_retention_percent(desired_retention)
+    if len(retentions) == 4:
+        grade_parts = [
+            f"{grade} {_format_retention_percent(retention)}"
+            for grade, retention in zip(("Again", "Hard", "Good", "Easy"), retentions)
+        ]
+        return f"{requested} -> {', '.join(grade_parts)}"
+
+    dynamic_desired_retention_enabled = bool(
+        getattr(states, "dynamic_desired_retention_enabled", False)
+    ) or core_dynamic_desired_retention_enabled(
+        collection=collection,
+        card=card,
+        logger=logger,
+    )
+    if dynamic_desired_retention_enabled:
+        return f"{requested} -> fixed DR"
+
+    return None
+
+
+def _format_retention_percent(value: float) -> str:
+    return f"{value * 100:.2f}%"

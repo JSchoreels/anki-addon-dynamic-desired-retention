@@ -8,6 +8,7 @@ from dynamic_desired_retention.api import (
     EffectiveDesiredRetention,
     effective_desired_retention,
     effective_desired_retention_info,
+    effective_desired_retention_info_for_cards,
     set_desired_retention_provider,
 )
 
@@ -39,6 +40,7 @@ class Provider:
 
 
 class Card:
+    id = 1
     desired_retention = 0.95
 
 
@@ -80,6 +82,56 @@ def test_effective_desired_retention_info_uses_provider() -> None:
         minimum_interval=2,
         maximum_interval=30,
     )
+
+
+def test_effective_desired_retention_info_for_cards_uses_provider_bulk() -> None:
+    class BulkProvider(Provider):
+        def effective_desired_retention_info_for_cards(
+            self,
+            *,
+            collection,
+            cards,
+            current_desired_retentions,
+            answer_grades=None,
+        ):
+            return {
+                card.id: EffectiveDesiredRetention(
+                    desired_retention=card.desired_retention,
+                    minimum_interval=2,
+                    maximum_interval=30,
+                )
+                for card in cards
+            }
+
+    set_desired_retention_provider(BulkProvider())
+
+    assert effective_desired_retention_info_for_cards(
+        collection=object(),
+        cards=[Card()],
+        current_desired_retentions={1: 0.9},
+    ) == {
+        1: EffectiveDesiredRetention(
+            desired_retention=0.95,
+            minimum_interval=2,
+            maximum_interval=30,
+        )
+    }
+
+
+def test_effective_desired_retention_info_for_cards_wraps_single_provider() -> None:
+    set_desired_retention_provider(Provider())
+
+    assert effective_desired_retention_info_for_cards(
+        collection=object(),
+        cards=[Card()],
+        current_desired_retentions={1: 0.9},
+    ) == {
+        1: EffectiveDesiredRetention(
+            desired_retention=0.95,
+            minimum_interval=2,
+            maximum_interval=30,
+        )
+    }
 
 
 def test_effective_desired_retention_info_wraps_legacy_provider() -> None:
