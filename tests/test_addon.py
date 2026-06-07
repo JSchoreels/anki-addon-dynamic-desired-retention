@@ -250,7 +250,7 @@ def test_addon_adds_dynamic_adr_card_info_row(monkeypatch) -> None:
         ("Dynamic DR", "0.60"),
         ("Dynamic DR Match", "search: note:Japanese"),
         (
-            "Dynamic ADR",
+            "Dynamic DR Scheduling",
             "60.00% -> Again 70.00%, Hard 80.00%, Good 90.00%, Easy 95.00%",
         ),
     ]
@@ -293,7 +293,7 @@ def test_addon_adds_fixed_dr_card_info_row_for_custom_dynamic_dr_fallback(
     assert [(row.label, row.value) for row in rows] == [
         ("Dynamic DR", "0.60"),
         ("Dynamic DR Match", "search: note:Japanese"),
-        ("Dynamic ADR", "60.00% -> fixed DR"),
+        ("Dynamic DR Scheduling", "60.00% -> fixed FSRS DR"),
     ]
 
 

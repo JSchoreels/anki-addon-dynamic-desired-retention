@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 
@@ -122,6 +123,59 @@ class FakeVariableBatchCollection(FakeCollection):
             stability / target_retrievability
             for _card_id, stability, target_retrievability in items
         ]
+
+
+class FakeAdrScheduler:
+    def __init__(self, retentions_by_card_id: dict[int, list[float]]) -> None:
+        self.retentions_by_card_id = retentions_by_card_id
+        self.calls: list[tuple[int, float | None]] = []
+
+    def get_scheduling_states(
+        self, card_id: int, desired_retention_override: float | None = None
+    ) -> SimpleNamespace:
+        self.calls.append((card_id, desired_retention_override))
+        return SimpleNamespace(
+            dynamic_desired_retentions=self.retentions_by_card_id.get(card_id, []),
+            dynamic_desired_retention_enabled=card_id in self.retentions_by_card_id,
+        )
+
+
+class FakeAdrVariableBatchCollection(FakeVariableBatchCollection):
+    def __init__(
+        self, cards: list[FakeCard], retentions_by_card_id: dict[int, list[float]]
+    ) -> None:
+        super().__init__(cards)
+        self.sched = FakeAdrScheduler(retentions_by_card_id)
+
+
+class FakeAdrBatchVariableBatchCollection(FakeVariableBatchCollection):
+    def __init__(
+        self, cards: list[FakeCard], retentions_by_card_id: dict[int, list[float]]
+    ) -> None:
+        super().__init__(cards)
+        self.sched = FakeAdrScheduler(retentions_by_card_id)
+        self.retentions_by_card_id = retentions_by_card_id
+        self.desired_retention_batch_calls: list[list[tuple[int, float]]] = []
+
+    def fsrs_desired_retention_for_intervals_batch(
+        self, items: list[tuple[int, float]]
+    ) -> list[SimpleNamespace]:
+        self.desired_retention_batch_calls.append(items)
+        targets: list[SimpleNamespace] = []
+        for card_id, desired_retention in items:
+            retentions = self.retentions_by_card_id.get(card_id, [])
+            interval_target = (
+                retentions[2] if len(retentions) > 2 else desired_retention
+            )
+            targets.append(
+                SimpleNamespace(
+                    interval_target_desired_retention=interval_target,
+                    dynamic_desired_retentions=retentions,
+                    dynamic_desired_retention_enabled=card_id
+                    in self.retentions_by_card_id,
+                )
+            )
+        return targets
 
 
 def test_field_rule_workload_sums_inverse_intervals_by_absolute_slice() -> None:
@@ -284,6 +338,100 @@ def test_field_rule_workload_uses_variable_interval_batch_when_available() -> No
         desired_retention
         for _card_id, _stability, desired_retention in collection.variable_batch_calls[0]
     ] == pytest.approx([0.875, 0.85, 0.825])
+
+
+def test_field_rule_workload_uses_active_adr_good_retention_for_intervals() -> None:
+    collection = FakeAdrBatchVariableBatchCollection(
+        [
+            FakeCard(1, "999", 20),
+            FakeCard(2, "999", 20),
+        ],
+        {
+            1: [0.7, 0.75, 0.8, 0.85],
+            2: [0.6, 0.65, 0.7, 0.75],
+        },
+    )
+
+    workloads = field_rule_slice_workloads(
+        collection,
+        FieldRuleRow(
+            note_type="Japanese",
+            field="Frequency",
+            filter_query="",
+            value_type="number",
+            linear_between_thresholds=False,
+            thresholds=[
+                FieldThresholdRow("1000", "90"),
+                FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+            ],
+        ),
+        logging.getLogger("test"),
+    )
+
+    assert collection.desired_retention_batch_calls == [[(1, 0.9), (2, 0.9)]]
+    assert collection.sched.calls == []
+    assert [
+        desired_retention
+        for _card_id, _stability, desired_retention in collection.variable_batch_calls[0]
+    ] == pytest.approx([0.8, 0.7])
+    assert workloads[0].workload == pytest.approx(1 / 25 + 1 / 29)
+    assert workloads[0].retention_workload == pytest.approx(
+        (1 / 25 + 1 / 29) * 0.9
+    )
+
+
+def test_field_rule_workload_uses_fixed_dr_when_adr_returns_no_mapping() -> None:
+    collection = FakeAdrBatchVariableBatchCollection(
+        [FakeCard(1, "999", 20)],
+        {1: []},
+    )
+
+    workloads = field_rule_slice_workloads(
+        collection,
+        FieldRuleRow(
+            note_type="Japanese",
+            field="Frequency",
+            filter_query="",
+            value_type="number",
+            linear_between_thresholds=False,
+            thresholds=[
+                FieldThresholdRow("1000", "90"),
+                FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+            ],
+        ),
+        logging.getLogger("test"),
+    )
+
+    assert collection.desired_retention_batch_calls == [[(1, 0.9)]]
+    assert collection.sched.calls == []
+    assert collection.variable_batch_calls[0] == [(1, 20.0, 0.9)]
+    assert workloads[0].workload == pytest.approx(1 / 22)
+
+
+def test_field_rule_workload_uses_scheduler_adr_fallback_without_batch_api() -> None:
+    collection = FakeAdrVariableBatchCollection(
+        [FakeCard(1, "999", 20)],
+        {1: [0.7, 0.75, 0.8, 0.85]},
+    )
+
+    field_rule_slice_workloads(
+        collection,
+        FieldRuleRow(
+            note_type="Japanese",
+            field="Frequency",
+            filter_query="",
+            value_type="number",
+            linear_between_thresholds=False,
+            thresholds=[
+                FieldThresholdRow("1000", "90"),
+                FieldThresholdRow(MINIMUM_RETENTION_VALUE, "50"),
+            ],
+        ),
+        logging.getLogger("test"),
+    )
+
+    assert collection.sched.calls == [(1, 0.9)]
+    assert collection.variable_batch_calls[0] == [(1, 20.0, 0.8)]
 
 
 def test_field_rule_workload_reuses_note_field_data_for_sibling_cards() -> None:

@@ -72,8 +72,11 @@ add-on clamps the in-memory review scheduling states for the matched field slice
 Conflicting threshold rows are highlighted in the editor. The threshold table
 also estimates each slice's workload by summing `1 / interval` for matching
 cards with FSRS stability, using Anki's FSRS interval calculation for each
-card's desired retention, then rounding the projected interval and capping it at
-the card deck's maximum interval. The editor displays workload as rounded
+card's desired retention. When Anki's batch ADR target helper reports a native
+Dynamic DR mapping for the active card-level preset, the estimate uses the
+Good-button ADR retention as the interval target. It then rounds the projected
+interval and caps it at the card deck's maximum interval. The editor displays
+workload as rounded
 `review/day` values, shows each slice's share as `Workload Ratio`, plus `Total
 Workload` with the same-population current workload in parentheses and
 workload-weighted `Expected Retention` below the threshold table. The current

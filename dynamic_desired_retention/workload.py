@@ -3,7 +3,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from logging import Logger
 from time import perf_counter
 from typing import Any
@@ -22,6 +22,8 @@ from .matcher import (
     _note_type_query,
 )
 from .rule_table import RuleTableError, table_desired_retention_to_scheduler_value
+
+GOOD_DYNAMIC_RETENTION_INDEX = 2
 
 
 @dataclass(frozen=True)
@@ -703,21 +705,24 @@ def _slice_workload_values(
 def _intervals_by_card(
     collection: Any, workload_cards: Sequence[_WorkloadCard], logger: Logger
 ) -> dict[int, float]:
+    interval_cards = _workload_cards_with_adr_interval_targets(
+        collection, workload_cards, logger
+    )
     variable_batch_fn = getattr(
         collection, "fsrs_interval_at_retrievability_variable_batch", None
     )
     if callable(variable_batch_fn):
         return _intervals_by_card_variable_batch(
-            variable_batch_fn, workload_cards, logger
+            variable_batch_fn, interval_cards, logger
         )
 
     batch_fn = getattr(collection, "fsrs_interval_at_retrievability_batch", None)
     if not callable(batch_fn):
-        return _intervals_by_card_singular(collection, workload_cards, logger)
+        return _intervals_by_card_singular(collection, interval_cards, logger)
 
     intervals: dict[int, float] = {}
     cards_by_retention: dict[float, list[_WorkloadCard]] = defaultdict(list)
-    for workload_card in workload_cards:
+    for workload_card in interval_cards:
         cards_by_retention[workload_card.desired_retention].append(workload_card)
 
     started_at = perf_counter()
@@ -740,12 +745,137 @@ def _intervals_by_card(
 
     logger.debug(
         "field rule workload FSRS interval batches: cards=%s retention_groups=%s intervals=%s elapsed_ms=%s",
-        len(workload_cards),
+        len(interval_cards),
         len(cards_by_retention),
         len(intervals),
         _elapsed_ms(started_at),
     )
     return intervals
+
+
+def _workload_cards_with_adr_interval_targets(
+    collection: Any, workload_cards: Sequence[_WorkloadCard], logger: Logger
+) -> Sequence[_WorkloadCard]:
+    batch_fn = getattr(collection, "fsrs_desired_retention_for_intervals_batch", None)
+    if callable(batch_fn):
+        return _workload_cards_with_batch_adr_interval_targets(
+            batch_fn, workload_cards, logger
+        )
+
+    scheduler = getattr(collection, "sched", None)
+    get_scheduling_states = getattr(scheduler, "get_scheduling_states", None)
+    if not callable(get_scheduling_states):
+        return workload_cards
+
+    started_at = perf_counter()
+    mapped_count = 0
+    fixed_count = 0
+    failed_count = 0
+    interval_cards: list[_WorkloadCard] = []
+    for workload_card in workload_cards:
+        try:
+            states = get_scheduling_states(
+                workload_card.card_id,
+                desired_retention_override=workload_card.desired_retention,
+            )
+        except Exception:
+            failed_count += 1
+            logger.debug(
+                "field rule workload ADR mapping failed for card %s",
+                workload_card.card_id,
+                exc_info=True,
+            )
+            interval_cards.append(workload_card)
+            continue
+
+        adr_retention = _good_dynamic_desired_retention(states)
+        if adr_retention is None:
+            fixed_count += 1
+            interval_cards.append(workload_card)
+            continue
+
+        mapped_count += 1
+        interval_cards.append(replace(workload_card, desired_retention=adr_retention))
+
+    if mapped_count or fixed_count or failed_count:
+        logger.debug(
+            "field rule workload ADR interval targets: cards=%s mapped=%s fixed=%s failed=%s elapsed_ms=%s",
+            len(workload_cards),
+            mapped_count,
+            fixed_count,
+            failed_count,
+            _elapsed_ms(started_at),
+        )
+    return interval_cards
+
+
+def _workload_cards_with_batch_adr_interval_targets(
+    batch_fn: Any, workload_cards: Sequence[_WorkloadCard], logger: Logger
+) -> Sequence[_WorkloadCard]:
+    started_at = perf_counter()
+    try:
+        targets = list(
+            batch_fn([(card.card_id, card.desired_retention) for card in workload_cards])
+        )
+    except Exception:
+        logger.exception("field rule workload ADR batch target resolution failed")
+        return workload_cards
+
+    if len(targets) != len(workload_cards):
+        logger.debug(
+            "field rule workload ADR batch target count mismatch: cards=%s targets=%s",
+            len(workload_cards),
+            len(targets),
+        )
+        return workload_cards
+
+    mapped_count = 0
+    fixed_count = 0
+    interval_cards: list[_WorkloadCard] = []
+    for workload_card, target in zip(workload_cards, targets):
+        interval_target = _interval_target_desired_retention(target)
+        if interval_target is None:
+            fixed_count += 1
+            interval_cards.append(workload_card)
+            continue
+
+        if _good_dynamic_desired_retention(target) is None:
+            fixed_count += 1
+        else:
+            mapped_count += 1
+        interval_cards.append(replace(workload_card, desired_retention=interval_target))
+
+    if mapped_count or fixed_count:
+        logger.debug(
+            "field rule workload ADR batch interval targets: cards=%s mapped=%s fixed=%s elapsed_ms=%s",
+            len(workload_cards),
+            mapped_count,
+            fixed_count,
+            _elapsed_ms(started_at),
+        )
+    return interval_cards
+
+
+def _interval_target_desired_retention(target: Any) -> float | None:
+    retention = getattr(target, "interval_target_desired_retention", None)
+    if isinstance(retention, (int, float)) and 0 < retention <= 1:
+        return float(retention)
+    return None
+
+
+def _good_dynamic_desired_retention(states: Any) -> float | None:
+    retentions = getattr(states, "dynamic_desired_retentions", None)
+    if retentions is None:
+        return None
+
+    try:
+        retention = list(retentions)[GOOD_DYNAMIC_RETENTION_INDEX]
+    except (IndexError, TypeError):
+        return None
+
+    if isinstance(retention, (int, float)) and 0 < retention <= 1:
+        return float(retention)
+    return None
 
 
 def _intervals_by_card_variable_batch(

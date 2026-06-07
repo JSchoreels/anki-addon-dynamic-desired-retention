@@ -297,7 +297,7 @@ class DynamicDesiredRetentionAddon:
         if adr_mapping is not None:
             rows.append(
                 _card_info_row(
-                    label="Dynamic ADR",
+                    label="Dynamic DR Scheduling",
                     value=adr_mapping,
                 )
             )
@@ -429,7 +429,7 @@ def _card_info_adr_mapping_value(
         logger=logger,
     )
     if dynamic_desired_retention_enabled:
-        return f"{requested} -> fixed DR"
+        return f"{requested} -> fixed FSRS DR"
 
     return None
 

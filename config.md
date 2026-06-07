@@ -126,9 +126,12 @@ of the field rule's total estimated workload. Below the threshold table,
 `Total Workload` sums the slice workloads and `Expected Retention` shows the
 workload-weighted desired retention. The estimates run in the background and
 show `...` while refreshing. Intervals are computed through Anki's FSRS interval
-API for each card and desired retention, so the selected FSRS deck-option
-version is used when available. The same slice interval bounds are applied to
-the projected intervals before the workload is summed.
+API for each card and desired retention, so the active card-level FSRS preset is
+used when available. When Anki's batch ADR target helper returns a native
+Dynamic DR mapping for that card and desired retention, the workload estimate
+uses the Good-button ADR retention as the interval target; otherwise it uses the
+fixed desired retention. The same slice interval bounds are applied to the
+projected intervals before the workload is summed.
 
 When no rule matches, the add-on returns `null` to Anki's hook, and Anki uses the
 deck/preset desired retention.

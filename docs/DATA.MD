@@ -198,12 +198,22 @@ query operation and the UI displays `...` while a refresh is pending or running.
 A slice's workload is the sum of `1 / interval` for matching cards assigned to
 that threshold row. The interval is requested from Anki's FSRS interval API with
 the card id, the card's current internal FSRS stability, and the desired
-retention that the field rule gives that card. On this Anki fork,
+retention that the field rule gives that card. Before requesting intervals, the
+add-on asks Anki's batch desired-retention helper for all workload cards in the
+scan. When the active card-level preset has native Dynamic DR and Anki returns
+an ADR mapping, the estimate uses the Good-button ADR retention as the interval
+target. This delegates policy precedence to Anki, so FSRS preset overlays from
+the Dynamic Preset Selection add-on are used for matching cards before their
+deck options. If Anki returns no ADR mapping, such as when Dynamic DR falls back
+to fixed FSRS DR, the field rule's desired retention is used as the interval
+target. Older Anki builds without the batch helper fall back to the per-card
+scheduling-state read. On this Anki fork,
 `memory_state.stability` is S90, so the add-on prefers
 `memory_state.stability_internal` and falls back to `memory_state.stability` only
 for older builds. This makes the estimate use the FSRS version and parameters
-selected by the card's deck options; on Anki builds without an FSRS-version
-selector, Anki's default FSRS parameters for that card are used.
+selected by the active card-level preset; on Anki builds without an FSRS-version
+selector or add-on preset overlay support, Anki's default FSRS parameters for
+that card are used.
 Before workload is summed, the projected interval is rounded to whole days and
 capped at the maximum interval configured by the card's original-or-current deck
 options. Field-rule slice interval bounds are then applied to the projected
@@ -213,10 +223,10 @@ are cached by note id so sibling cards do not re-read the same note data.
 Numeric threshold rows are prepared once per scan before card field values are
 matched. When Anki exposes the variable-target FSRS interval batch API, the
 workload estimate sends all matched cards in one request with each card's own
-desired retention. Older Anki builds fall back to grouping FSRS interval
-requests by desired retention because their batch interval API accepts one
-target retention per call. The estimate does not reproduce fuzz or load-balancer
-placement.
+resolved interval target. Older Anki builds fall back to grouping FSRS interval
+requests by interval target because their batch interval API accepts one target
+retention per call. The estimate does not reproduce fuzz, load-balancer
+placement, or answer-button scheduling intervals.
 `Workload Ratio` is the slice workload divided by the total workload for the
 field rule. The editor displays workload rounded to whole `review/day` values,
 and displays `Total Workload` as the rounded sum of slice workloads. It also
@@ -260,11 +270,12 @@ stored desired retention.
 
 When Anki exposes Dynamic DR information on scheduling states, Card Info also
 reads fresh scheduling states for the matched desired retention override and
-displays the mapping from the requested desired retention to Again, Hard, Good
-and Easy ADR retentions. This covers both deck-option Dynamic DR and add-on FSRS
-preset overlays. If Anki reports Dynamic DR is enabled but provides no ADR
-mapping, such as when the requested retention uses the fixed-DR fallback path,
-Card Info displays that the requested retention maps to fixed DR. Older Anki
+displays a `Dynamic DR Scheduling` row. When native Dynamic DR is active, the row
+maps the requested desired retention to Again, Hard, Good and Easy ADR
+retentions. This covers both deck-option Dynamic DR and add-on FSRS preset
+overlays. If Anki reports Dynamic DR is enabled but provides no ADR mapping,
+such as when the requested retention uses the fixed-FSRS-DR fallback path, Card
+Info displays that the requested retention maps to fixed FSRS DR. Older Anki
 builds that do not expose the mapping do not get the extra row. This is
 read-only scheduler access and does not update cards, revlog, or config.
 
