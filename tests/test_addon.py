@@ -128,6 +128,74 @@ def test_addon_recomputes_answer_state_with_core_dynamic_dr() -> None:
     assert (123, 0.99) in reviewer.mw.col.sched.calls
 
 
+def test_addon_respects_absolute_grade_rule_with_core_dynamic_dr_and_field_rule() -> None:
+    class DynamicAdrDecks:
+        def config_dict_for_deck_id(self, deck_id: int) -> dict:
+            return {
+                "rev": {"maxIvl": 36500},
+                "fsrsDynamicDesiredRetentionEnabled": True,
+            }
+
+    class DynamicAdrScheduler:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def get_scheduling_states(
+            self, card_id: int, desired_retention_override: float | None = None
+        ) -> object:
+            self.calls.append((card_id, desired_retention_override))
+            states = _states_with_again_review()
+            states.again.normal.review.scheduled_days = 9
+            states.hard.normal.review.scheduled_days = 6
+            states.hard.normal.review.memory_state.stability = 10
+            return SimpleNamespace(
+                dynamic_desired_retentions=[0.5, 0.6, 0.7, 0.8],
+                again=states.again,
+                hard=states.hard,
+            )
+
+    class DynamicAdrCollection(FakeCollection):
+        def __init__(self) -> None:
+            self.decks = DynamicAdrDecks()
+            self.sched = DynamicAdrScheduler()
+
+        def fsrs_interval_at_retrievability(
+            self, card_id: int, stability: float, desired_retention: float
+        ) -> float:
+            return 2 if desired_retention == 0.95 else 8
+
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    grade_rules = [GradeRule("again", "absolute", 0.95)]
+    addon._grade_rules = grade_rules
+    addon._matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                value_type="number",
+                thresholds=[FieldThreshold("1000", 0.6)],
+            )
+        ],
+        logger,
+        grade_rules=grade_rules,
+    )
+    reviewer = FakeReviewer()
+    reviewer.mw.col = DynamicAdrCollection()
+    reviewer._v3.states.hard.normal.review.scheduled_days = 4
+    reviewer._v3.states.hard.normal.review.memory_state.stability = 10
+
+    returned_states = addon.update_scheduling_states(
+        reviewer._v3.states, reviewer, reviewer.card
+    )
+
+    assert returned_states is reviewer._v3.states
+    assert reviewer._v3.states.again.normal.review.scheduled_days == 2
+    assert reviewer._v3.states.hard.normal.review.scheduled_days == 6
+    assert (123, 0.95) in reviewer.mw.col.sched.calls
+
+
 def test_addon_updates_answer_override_for_grade_rule() -> None:
     logger = logging.getLogger("test")
     addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
@@ -249,6 +317,68 @@ def test_addon_adds_dynamic_adr_card_info_row(monkeypatch) -> None:
     assert [(row.label, row.value) for row in rows] == [
         ("Dynamic DR", "0.60"),
         ("Dynamic DR Match", "search: note:Japanese"),
+        (
+            "Dynamic DR Scheduling",
+            "60.00% -> Again 70.00%, Hard 80.00%, Good 90.00%, Easy 95.00%",
+        ),
+    ]
+    assert collection.sched.calls == [(123, 0.6)]
+
+
+def test_addon_adds_grade_rule_card_info_row_with_dynamic_adr_and_field_rule(
+    monkeypatch,
+) -> None:
+    class DynamicAdrScheduler:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def get_scheduling_states(
+            self, card_id: int, desired_retention_override: float | None = None
+        ) -> object:
+            self.calls.append((card_id, desired_retention_override))
+            return SimpleNamespace(
+                dynamic_desired_retentions=[0.7, 0.8, 0.9, 0.95],
+            )
+
+    class DynamicAdrCollection(FakeCollection):
+        def __init__(self) -> None:
+            self.sched = DynamicAdrScheduler()
+
+    logger = logging.getLogger("test")
+    grade_rules = [GradeRule("again", "absolute", 0.95)]
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = grade_rules
+    addon._matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                value_type="number",
+                thresholds=[FieldThreshold("1000", 0.6)],
+            )
+        ],
+        logger,
+        grade_rules=grade_rules,
+    )
+    collection = DynamicAdrCollection()
+    rows = []
+
+    monkeypatch.setattr(
+        addon_module,
+        "mw",
+        SimpleNamespace(col=collection),
+    )
+
+    addon.add_card_info_rows(rows, FakeCard())
+
+    assert [(row.label, row.value) for row in rows] == [
+        ("Dynamic DR", "0.60"),
+        (
+            "Dynamic DR Match",
+            "field: Japanese.Frequency: value 999; matched slice <= 1000.00",
+        ),
+        ("Dynamic DR Grade Rules", "Again 95.00%"),
         (
             "Dynamic DR Scheduling",
             "60.00% -> Again 70.00%, Hard 80.00%, Good 90.00%, Easy 95.00%",

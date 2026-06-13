@@ -32,7 +32,7 @@ def apply_grade_rules_to_scheduling_states(
         return False
 
     changed = False
-    max_interval = _card_max_interval(collection, card, logger)
+    max_interval = card_max_interval(collection, card, logger)
     for grade, state_name in GRADE_STATE_NAMES.items():
         desired_retention = apply_grade_rule(
             desired_retention=base_desired_retention,
@@ -44,27 +44,53 @@ def apply_grade_rules_to_scheduling_states(
             continue
 
         state = getattr(states, state_name, None)
-        for review_state in _review_states(state):
-            stability = _review_stability(review_state)
-            if stability is None:
-                continue
+        changed = (
+            apply_desired_retention_to_scheduling_state(
+                interval_fn=interval_fn,
+                max_interval=max_interval,
+                card=card,
+                state=state,
+                desired_retention=desired_retention,
+                grade=grade,
+                logger=logger,
+            )
+            or changed
+        )
 
-            try:
-                interval = interval_fn(card.id, stability, desired_retention)
-            except Exception:
-                logger.exception(
-                    "grade rule %s FSRS interval calculation failed for card %s",
-                    grade,
-                    card.id,
-                )
-                continue
+    return changed
 
-            if not isinstance(interval, (int, float)) or interval <= 0:
-                continue
 
-            review_state.scheduled_days = _scheduled_interval(interval, max_interval)
-            changed = True
+def apply_desired_retention_to_scheduling_state(
+    *,
+    interval_fn: Any,
+    max_interval: int | None,
+    card: Any,
+    state: Any,
+    desired_retention: float,
+    grade: Grade,
+    logger: Logger,
+) -> bool:
+    changed = False
+    for review_state in _review_states(state):
+        stability = _review_stability(review_state)
+        if stability is None:
+            continue
 
+        try:
+            interval = interval_fn(card.id, stability, desired_retention)
+        except Exception:
+            logger.exception(
+                "grade rule %s FSRS interval calculation failed for card %s",
+                grade,
+                card.id,
+            )
+            continue
+
+        if not isinstance(interval, (int, float)) or interval <= 0:
+            continue
+
+        review_state.scheduled_days = _scheduled_interval(interval, max_interval)
+        changed = True
     return changed
 
 
@@ -136,7 +162,7 @@ def _review_stability(review_state: Any) -> float | None:
     return float(stability)
 
 
-def _card_max_interval(collection: Any, card: Any, logger: Logger) -> int | None:
+def card_max_interval(collection: Any, card: Any, logger: Logger) -> int | None:
     deck_id = _card_deck_id(card)
     if deck_id is None:
         return None

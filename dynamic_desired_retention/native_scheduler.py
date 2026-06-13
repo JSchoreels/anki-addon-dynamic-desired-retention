@@ -4,7 +4,11 @@ from logging import Logger
 from typing import Any
 
 from .grade_rules import GradeRule, apply_grade_rule
-from .grade_state_adjuster import GRADE_STATE_NAMES
+from .grade_state_adjuster import (
+    GRADE_STATE_NAMES,
+    apply_desired_retention_to_scheduling_state,
+    card_max_interval,
+)
 
 
 def core_dynamic_desired_retention_enabled(
@@ -35,8 +39,12 @@ def apply_grade_rules_with_scheduler_states(
         logger.warning("grade rules skipped: Anki scheduling-state API unavailable")
         return False
 
+    interval_fn = getattr(collection, "fsrs_interval_at_retrievability", None)
+    max_interval = card_max_interval(collection, card, logger)
     changed = False
+    missing_interval_api_logged = False
     for grade, state_name in GRADE_STATE_NAMES.items():
+        has_grade_rule = _has_grade_rule(grade_rules, grade)
         desired_retention = apply_grade_rule(
             desired_retention=base_desired_retention,
             grade=grade,
@@ -59,8 +67,33 @@ def apply_grade_rules_with_scheduler_states(
             )
             continue
 
-        source_state = getattr(source_states, state_name, None)
         target_state = getattr(states, state_name, None)
+        if (
+            has_grade_rule
+            and _has_dynamic_desired_retention_mapping(source_states)
+        ):
+            if not callable(interval_fn):
+                if not missing_interval_api_logged:
+                    logger.warning(
+                        "grade rules skipped: Anki FSRS interval API unavailable"
+                    )
+                    missing_interval_api_logged = True
+                continue
+            changed = (
+                apply_desired_retention_to_scheduling_state(
+                    interval_fn=interval_fn,
+                    max_interval=max_interval,
+                    card=card,
+                    state=target_state,
+                    desired_retention=desired_retention,
+                    grade=grade,
+                    logger=logger,
+                )
+                or changed
+            )
+            continue
+
+        source_state = getattr(source_states, state_name, None)
         copy_from = getattr(target_state, "CopyFrom", None)
         if source_state is None or not callable(copy_from):
             continue
@@ -69,6 +102,20 @@ def apply_grade_rules_with_scheduler_states(
         changed = True
 
     return changed
+
+
+def _has_grade_rule(grade_rules: list[GradeRule], grade: str) -> bool:
+    return any(rule.grade == grade for rule in grade_rules)
+
+
+def _has_dynamic_desired_retention_mapping(states: Any) -> bool:
+    retentions = getattr(states, "dynamic_desired_retentions", None)
+    if retentions is None:
+        return False
+    try:
+        return len(list(retentions)) == len(GRADE_STATE_NAMES)
+    except TypeError:
+        return False
 
 
 def _deck_config_for_card(collection: Any, card: Any, logger: Logger) -> dict | None:

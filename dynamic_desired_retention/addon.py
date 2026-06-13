@@ -18,7 +18,7 @@ from .config import (
     load_grade_rules,
     load_rules,
 )
-from .grade_rules import Grade, apply_grade_rule, grade_from_ease
+from .grade_rules import GRADE_LABELS, Grade, apply_grade_rule, grade_from_ease
 from .grade_state_adjuster import (
     apply_grade_rules_to_scheduling_states,
     apply_interval_bounds_to_scheduling_states,
@@ -288,6 +288,18 @@ class DynamicDesiredRetentionAddon:
                 value=f"{match.source}: {match.details}",
             )
         )
+        grade_rules_value = _card_info_grade_rules_value(
+            desired_retention=match.desired_retention,
+            grade_rules=self._grade_rules,
+            logger=self._logger,
+        )
+        if grade_rules_value is not None:
+            rows.append(
+                _card_info_row(
+                    label="Dynamic DR Grade Rules",
+                    value=grade_rules_value,
+                )
+            )
         adr_mapping = _card_info_adr_mapping_value(
             collection=mw.col,
             card=card,
@@ -432,6 +444,37 @@ def _card_info_adr_mapping_value(
         return f"{requested} -> fixed FSRS DR"
 
     return None
+
+
+def _card_info_grade_rules_value(
+    *,
+    desired_retention: float,
+    grade_rules: list[GradeRule],
+    logger: Logger,
+) -> str | None:
+    if not grade_rules:
+        return None
+
+    rules_by_grade = {rule.grade: rule for rule in grade_rules}
+    grade_parts = []
+    for grade, label in GRADE_LABELS.items():
+        if grade not in rules_by_grade:
+            continue
+
+        adjusted_retention = apply_grade_rule(
+            desired_retention=desired_retention,
+            grade=grade,
+            grade_rules=grade_rules,
+            logger=logger,
+        )
+        if adjusted_retention is None:
+            continue
+
+        grade_parts.append(f"{label} {_format_retention_percent(adjusted_retention)}")
+
+    if not grade_parts:
+        return None
+    return ", ".join(grade_parts)
 
 
 def _format_retention_percent(value: float) -> str:

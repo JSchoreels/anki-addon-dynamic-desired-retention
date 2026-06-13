@@ -152,6 +152,14 @@ review desired retention is 60%, relative `0.8` resolves to 92%, and relative
 `-0.2` resolves to 48%. Relative values must be greater than -100% and at most
 100%, because Anki desired retention cannot be 0%.
 
+During review scheduling, a configured grade rule is treated as the final
+desired-retention target for that answer button. When native Dynamic DR is
+enabled and Anki returns an ADR mapping for the requested value, the add-on uses
+Anki's FSRS interval API to apply the grade rule's exact target to the matching
+answer-button review state instead of feeding that value back through the ADR
+mapping for the same grade. Field-rule interval bounds are applied after this
+grade-specific interval update.
+
 ## Add-on Config Update
 
 `Tools > FSRS Dynamic Desired Retention Table` opens an editor with separate tabs for
@@ -263,10 +271,13 @@ the add-on config clears these in-memory caches.
 
 When Anki provides the `card_info_will_add_rows` GUI hook, the add-on evaluates
 the current search and field rules for the Card Info card and appends
-display-only rows for the live dynamic desired retention match. This reads the
-same card, note, note type, field values and search results used during review,
-but does not write to collection storage and does not use the card's previously
-stored desired retention.
+display-only rows for the live dynamic desired retention match. When grade rules
+are configured, Card Info also displays the effective desired retention for each
+configured answer-button grade rule after applying it to the matched base
+desired retention. This reads the same card, note, note type, field values,
+search results and grade-rule config used during review, but does not write to
+collection storage and does not use the card's previously stored desired
+retention.
 
 When Anki exposes Dynamic DR information on scheduling states, Card Info also
 reads fresh scheduling states for the matched desired retention override and
@@ -356,11 +367,14 @@ negative relative: base + value * base
 ```
 
 When the card's deck preset has core Dynamic DR enabled, the add-on asks Anki's
-scheduler for a fresh scheduling-state set for each grade-rule target desired
-retention and copies the matching grade state. This keeps native Dynamic DR
-policy calculation in Anki core. Otherwise, the adjusted desired retention is
-converted to a scheduled interval with Anki's FSRS interval API and written to
-the matching grade state, such as `again`, `hard`, `good`, or `easy`.
+scheduler for a fresh scheduling-state set for each target desired retention.
+If Anki returns a native ADR mapping and the answer button has an enabled grade
+rule, the add-on treats the grade rule as the final interval target and writes
+that interval through Anki's FSRS interval API. Unconfigured answer buttons, and
+native Dynamic DR fixed-DR fallback states, keep Anki's matching scheduler state.
+On builds without core Dynamic DR, the adjusted desired retention is converted
+to a scheduled interval with Anki's FSRS interval API and written to the matching
+grade state, such as `again`, `hard`, `good`, or `easy`.
 
 When the user answers, the add-on also updates the reviewer's
 `desired_retention_override` to the selected grade's adjusted desired retention.
