@@ -65,6 +65,9 @@ relative percentile thresholds such as `Top 10%`. Numeric field rules include a
 field values can receive the higher desired retention. The editor keeps numeric
 thresholds sorted, validates desired-retention order, and always includes a
 `Minimum Retention` row for values beyond the least-important threshold.
+Empty numeric fields are treated as non-matches. When a numeric field contains
+HTML formatting, the add-on parses its visible text, so a value such as
+`<li>17845</li>` is handled as `17845`.
 Each slice can also set optional minimum and maximum intervals in days; the
 add-on clamps the in-memory review scheduling states for the matched field slice.
 `Scope Filter` limits the cards a field rule can apply to, while

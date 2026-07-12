@@ -3,6 +3,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from logging import Logger
 from typing import Protocol
 
@@ -60,6 +61,22 @@ class _NumericMatch:
     slice_label: str
     minimum_interval: int | None = None
     maximum_interval: int | None = None
+
+
+@dataclass
+class _FieldRuleBulkSkips:
+    empty_numeric_card_ids: list[int]
+    invalid_numeric_card_ids: list[int]
+
+
+class _FieldTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        if text := data.strip():
+            self.parts.append(text)
 
 
 class DesiredRetentionMatcher:
@@ -215,9 +232,14 @@ class DesiredRetentionMatcher:
 
         for index, rule in enumerate(self._field_rules):
             matched_count = 0
+            bulk_skips = _FieldRuleBulkSkips([], [])
             for card_id in list(unmatched_card_ids):
                 field_match = self._match_field_rule(
-                    collection, cards_by_id[card_id], rule, index
+                    collection,
+                    cards_by_id[card_id],
+                    rule,
+                    index,
+                    bulk_skips=bulk_skips,
                 )
                 if field_match is None:
                     continue
@@ -237,6 +259,28 @@ class DesiredRetentionMatcher:
                     matched_count,
                     rule.note_type,
                     rule.field,
+                )
+            if bulk_skips.empty_numeric_card_ids:
+                self._logger.debug(
+                    (
+                        "field rule %s skipped %s cards in bulk: field %s is "
+                        "empty; sample_card_ids=%s"
+                    ),
+                    index,
+                    len(bulk_skips.empty_numeric_card_ids),
+                    rule.field,
+                    sorted(bulk_skips.empty_numeric_card_ids)[:5],
+                )
+            if bulk_skips.invalid_numeric_card_ids:
+                self._logger.debug(
+                    (
+                        "field rule %s skipped %s cards in bulk: field %s value "
+                        "is not numeric; sample_card_ids=%s"
+                    ),
+                    index,
+                    len(bulk_skips.invalid_numeric_card_ids),
+                    rule.field,
+                    sorted(bulk_skips.invalid_numeric_card_ids)[:5],
                 )
             if not unmatched_card_ids:
                 break
@@ -269,6 +313,8 @@ class DesiredRetentionMatcher:
         card: Card,
         rule: FieldRule,
         index: int,
+        *,
+        bulk_skips: _FieldRuleBulkSkips | None = None,
     ) -> FieldRuleMatch | None:
         if rule.scope_query and not self._matches_field_rule_scope(
             collection, card.id, rule, index
@@ -319,7 +365,12 @@ class DesiredRetentionMatcher:
             return _field_rule_match_for_text_value(field_value, rule)
 
         return self._field_rule_match_for_numeric_value(
-            collection, field_value, rule, index, card.id
+            collection,
+            field_value,
+            rule,
+            index,
+            card.id,
+            bulk_skips=bulk_skips,
         )
 
     def _matches_field_rule_scope(
@@ -390,16 +441,34 @@ class DesiredRetentionMatcher:
         rule: FieldRule,
         index: int,
         card_id: int,
+        *,
+        bulk_skips: _FieldRuleBulkSkips | None = None,
     ) -> FieldRuleMatch | None:
+        numeric_text = _numeric_field_text(field_value)
+        if numeric_text is None:
+            if bulk_skips is None:
+                self._logger.debug(
+                    "field rule %s skipped card %s: field %s is empty",
+                    index,
+                    card_id,
+                    rule.field,
+                )
+            else:
+                bulk_skips.empty_numeric_card_ids.append(card_id)
+            return None
+
         try:
-            value = float(field_value)
+            value = float(numeric_text)
         except ValueError:
-            self._logger.debug(
-                "field rule %s skipped card %s: field %s value is not numeric",
-                index,
-                card_id,
-                rule.field,
-            )
+            if bulk_skips is None:
+                self._logger.debug(
+                    "field rule %s skipped card %s: field %s value is not numeric",
+                    index,
+                    card_id,
+                    rule.field,
+                )
+            else:
+                bulk_skips.invalid_numeric_card_ids.append(card_id)
             return None
 
         if rule.field_value_mode == "relative":
@@ -612,6 +681,19 @@ def _field_rule_match_for_text_value(
                 maximum_interval=threshold.maximum_interval,
             )
     return None
+
+
+def _numeric_field_text(field_value: str) -> str | None:
+    value = field_value.strip()
+    if not value:
+        return None
+    if "<" not in value or ">" not in value:
+        return value
+
+    parser = _FieldTextParser()
+    parser.feed(value)
+    parser.close()
+    return " ".join(parser.parts) or None
 
 
 def _numeric_thresholds(thresholds: list[FieldThreshold]) -> list[_NumericThreshold]:

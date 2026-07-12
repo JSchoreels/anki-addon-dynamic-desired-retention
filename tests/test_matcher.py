@@ -331,6 +331,33 @@ def test_numeric_field_rule_matches_exact_threshold_value() -> None:
     assert desired_retention == 0.8
 
 
+def test_numeric_field_rule_matches_html_wrapped_value() -> None:
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                value_type="number",
+                thresholds=[FieldThreshold("20000", 0.9)],
+            )
+        ],
+        logging.getLogger("test"),
+    )
+
+    desired_retention = matcher.desired_retention_for_card(
+        collection=FakeCollection(set()),
+        card=FakeCard(
+            fields={
+                "Frequency": '<ul style="text-align: left;"><li>17845</li></ul>'
+            }
+        ),
+        current_desired_retention=None,
+    )
+
+    assert desired_retention == 0.9
+
+
 def test_numeric_field_rule_interpolates_between_thresholds() -> None:
     matcher = DesiredRetentionMatcher(
         [],
@@ -950,3 +977,44 @@ def test_base_desired_retention_matches_for_cards_uses_bulk_rule_search() -> Non
     assert collection.searched.count("tag:priority") == 1
     assert collection.searched.count("deck:Filtered") == 1
     assert "tag:priority AND cid:2" not in collection.searched
+
+
+def test_bulk_numeric_field_rule_aggregates_invalid_value_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    cards = [
+        FakeCard(card_id=1, fields={"Frequency": "1000"}),
+        FakeCard(card_id=2, fields={"Frequency": ""}),
+        FakeCard(card_id=3, fields={"Frequency": "unknown"}),
+    ]
+    logger = logging.getLogger("test.bulk-invalid-numeric")
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                value_type="number",
+                thresholds=[FieldThreshold("1000", 0.9)],
+            )
+        ],
+        logger,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        matches = matcher.base_desired_retention_matches_for_cards(
+            collection=FakeCollection(cards=cards),
+            cards=cards,
+        )
+
+    assert set(matches) == {1}
+    assert "skipped card 2" not in caplog.text
+    assert "skipped card 3" not in caplog.text
+    assert (
+        "field rule 0 skipped 1 cards in bulk: field Frequency is empty; "
+        "sample_card_ids=[2]"
+    ) in caplog.text
+    assert (
+        "field rule 0 skipped 1 cards in bulk: field Frequency value is not "
+        "numeric; sample_card_ids=[3]"
+    ) in caplog.text

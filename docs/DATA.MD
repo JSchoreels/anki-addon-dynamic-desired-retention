@@ -320,9 +320,12 @@ reads note data. It does not create, update, or delete collection data.
 Current Anki builds are read through the `note_type()` API. The older
 deprecated `model()` API is not used.
 
-If a configured field is missing, a numeric field cannot be parsed as a number,
-or no threshold matches, the field rule is treated as a non-match. These card
-data mismatches are logged at debug level to avoid warning spam during review.
+If a configured field is missing or empty, a numeric field cannot be parsed as
+a number, or no threshold matches, the field rule is treated as a non-match.
+Numeric fields are parsed from their visible text, so simple HTML formatting
+around a number does not prevent a match. Single-card data mismatches are logged
+at debug level. Bulk matching aggregates empty and invalid numeric values into
+count-and-sample messages instead of logging every card.
 
 For relative numeric field rules, the add-on also searches for the comparison
 population:
