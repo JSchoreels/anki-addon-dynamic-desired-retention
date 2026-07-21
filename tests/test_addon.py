@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
+import aqt
 from anki.scheduler_pb2 import SchedulingStates
 
 import dynamic_desired_retention.addon as addon_module
@@ -97,6 +98,33 @@ def test_addon_updates_answer_button_state_for_absolute_grade_rule() -> None:
 
     assert returned_states is reviewer._v3.states
     assert reviewer._v3.states.again.normal.review.scheduled_days == 1
+
+
+def test_config_update_reloads_before_notifying_rwkv(monkeypatch) -> None:
+    events: list[str] = []
+    addon = DynamicDesiredRetentionAddon(
+        module="test",
+        logger=logging.getLogger("test"),
+    )
+    monkeypatch.setattr(addon, "_reload_config", lambda: events.append("reload"))
+    monkeypatch.setattr(
+        addon_module,
+        "_notify_rwkv_dynamic_desired_retention_changed",
+        lambda logger: events.append("notify"),
+    )
+
+    addon._on_config_updated()
+
+    assert events == ["reload", "notify"]
+
+
+def test_rwkv_notification_is_optional_for_older_anki(monkeypatch) -> None:
+    monkeypatch.setattr(addon_module, "mw", SimpleNamespace())
+    monkeypatch.setattr(aqt, "rwkv_scheduler", SimpleNamespace())
+
+    addon_module._notify_rwkv_dynamic_desired_retention_changed(
+        logging.getLogger("test")
+    )
 
 
 def test_addon_recomputes_answer_state_with_core_dynamic_dr() -> None:

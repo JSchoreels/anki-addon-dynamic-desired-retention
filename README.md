@@ -58,6 +58,9 @@ You can edit search rules, field rules and grade rules from
 In the editor, `90`, `90%`, and `0.90` all mean 90%.
 The editor displays those values as `90`.
 When editing JSON directly, use decimal values: `0.9` means 90%.
+On Anki builds with RWKV-Instant integration, saving rules also invalidates
+RWKV's resolved targets and refreshes the current screen's due counts, so an
+Anki restart is not required.
 
 Field rules can target exact text values, absolute numeric thresholds, or
 relative percentile thresholds such as `Top 10%`. Numeric field rules include a

@@ -4,6 +4,10 @@
 
 The add-on reads Anki's add-on config through `mw.addonManager.getConfig(__name__)`
 when it starts and when Anki reports that the config was updated.
+After a config update is loaded, the add-on calls Anki's optional
+`dynamic_desired_retention_did_change()` RWKV integration point. Supporting
+builds discard cached targets and scores and refresh the current screen's study
+queues and due counts; builds without that integration continue normally.
 
 Expected config shape:
 

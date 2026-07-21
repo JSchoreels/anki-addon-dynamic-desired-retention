@@ -314,8 +314,9 @@ class DynamicDesiredRetentionAddon:
                 )
             )
 
-    def _on_config_updated(self, _config: Any) -> None:
+    def _on_config_updated(self, _config: Any = None) -> None:
         self._reload_config()
+        _notify_rwkv_dynamic_desired_retention_changed(self._logger)
 
     def _reload_config(self) -> None:
         config = None
@@ -360,7 +361,7 @@ class DynamicDesiredRetentionAddon:
             grade_rules=self._grade_rules,
             collection=mw.col,
             logger=self._logger,
-            on_saved=self._reload_config,
+            on_saved=self._on_config_updated,
         )
         dialog.exec()
 
@@ -368,6 +369,25 @@ class DynamicDesiredRetentionAddon:
 def setup() -> None:
     logger = AddonManager.get_logger(__name__)
     DynamicDesiredRetentionAddon(module=__name__, logger=logger).setup()
+
+
+def _notify_rwkv_dynamic_desired_retention_changed(logger: Logger) -> None:
+    if mw is None:
+        return
+
+    try:
+        from aqt import rwkv_scheduler
+    except ImportError:
+        return
+
+    notify = getattr(rwkv_scheduler, "dynamic_desired_retention_did_change", None)
+    if not callable(notify):
+        return
+
+    try:
+        notify(mw)
+    except Exception:
+        logger.exception("failed to invalidate RWKV after Dynamic DR config update")
 
 
 def _field_rules_have_interval_bounds(field_rules: list[FieldRule]) -> bool:

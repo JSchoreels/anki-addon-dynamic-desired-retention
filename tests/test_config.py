@@ -56,6 +56,50 @@ def test_config_from_rules_uses_addon_config_shape() -> None:
     }
 
 
+def test_previous_release_config_loads_without_migration() -> None:
+    previous_release_config = {
+        "rules": [{"query": "tag:priority", "desired_retention": 0.95}],
+        "field_rules": [
+            {
+                "note_type": "Japanese",
+                "field": "Frequency",
+                "filter_query": "is:suspended",
+                "field_value_mode": "relative",
+                "relative_top_direction": "lower",
+                "value_type": "number",
+                "linear_between_thresholds": True,
+                "minimum_desired_retention": 0.5,
+                "thresholds": [
+                    {"value": "Top 10%", "desired_retention": 0.9},
+                    {"value": "50%", "desired_retention": 0.7},
+                ],
+            }
+        ],
+    }
+    logger = logging.getLogger("test")
+
+    assert load_rules(previous_release_config, logger) == [
+        Rule(query="tag:priority", desired_retention=0.95)
+    ]
+    assert load_field_rules(previous_release_config, logger) == [
+        FieldRule(
+            note_type="Japanese",
+            field="Frequency",
+            filter_query="is:suspended",
+            field_value_mode="relative",
+            relative_top_direction="lower",
+            value_type="number",
+            linear_between_thresholds=True,
+            minimum_desired_retention=0.5,
+            thresholds=[
+                FieldThreshold(value="10", desired_retention=0.9),
+                FieldThreshold(value="50", desired_retention=0.7),
+            ],
+        )
+    ]
+    assert load_grade_rules(previous_release_config, logger) == []
+
+
 def test_load_field_rules_accepts_text_and_number_rules() -> None:
     field_rules = load_field_rules(
         {

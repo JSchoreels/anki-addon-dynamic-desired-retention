@@ -12,3 +12,9 @@ Validation reads the archive, checks that required runtime files such as
 that should not ship.
 
 The generated archive is ignored by git because it is build output.
+
+Before publishing an update, run the test suite's previous-release persisted
+configuration regression case. Add-on updates preserve `meta.json`, so new
+code must continue to load missing newer keys with safe defaults. Optional Anki
+integration points must also remain guarded so the update can run on the Anki
+build supported by the previous release.
