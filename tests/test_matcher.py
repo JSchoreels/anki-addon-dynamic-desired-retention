@@ -619,6 +619,32 @@ def test_numeric_linear_field_rule_uses_minimum_above_highest_threshold() -> Non
     assert desired_retention == 0.5
 
 
+def test_relative_population_counts_formatted_numeric_fields() -> None:
+    cards = [
+        FakeCard(card_id=1, fields={"Frequency": "<b>10</b>"}),
+        FakeCard(card_id=2, fields={"Frequency": "20"}),
+        FakeCard(card_id=3, fields={"Frequency": "30"}),
+    ]
+    matcher = DesiredRetentionMatcher(
+        [],
+        [FieldRule(
+            note_type="Japanese",
+            field="Frequency",
+            value_type="number",
+            field_value_mode="relative",
+            thresholds=[FieldThreshold("50", 0.9), FieldThreshold("100", 0.6)],
+        )],
+        logging.getLogger("test"),
+    )
+    collection = FakeCollection(
+        search_results={'note:"Japanese"': [card.id for card in cards]}, cards=cards
+    )
+    # 20 is the second of three notes, not the first of two unformatted notes.
+    assert matcher.desired_retention_for_card(
+        collection=collection, card=cards[1], current_desired_retention=0.7
+    ) == 0.6
+
+
 def test_relative_numeric_field_rule_matches_lower_top_percentile_steps() -> None:
     cards = [
         FakeCard(card_id=index + 1, fields={"Frequency": value})

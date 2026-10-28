@@ -650,8 +650,11 @@ def _numeric_field_values_for_cards(
         if field_value is None:
             continue
 
+        numeric_text = _numeric_field_text(field_value)
+        if numeric_text is None:
+            continue
         try:
-            values.append(float(field_value))
+            values.append(float(numeric_text))
         except ValueError:
             continue
     return values
