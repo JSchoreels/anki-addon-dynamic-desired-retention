@@ -1,5 +1,40 @@
 # Dynamic Desired Retention Data
 
+## Synced Scheduling Rules
+
+The search, field, and grade rule lists are also stored as the versioned
+`dynamicDesiredRetentionRules` collection configuration value. This lets Kuma
+versions that implement the same format evaluate the rules after normal Anki
+sync. Only these rule lists are copied; other add-on configuration remains local.
+The value has `version: 1` and the same `rules`, `field_rules`, and
+`grade_rules` entries as the add-on config described below. The lists remain
+ordered and may be empty.
+
+For a profile without a synced value, first sync the collection, then open the
+rule table and save the existing rules once to put them into the collection.
+Opening a profile does not automatically upload old local rules: Anki syncs
+collection configuration as a snapshot, and making a collection newer before
+its first sync could overwrite configuration from another device. An existing
+supported synced value wins on profile open and after sync, and is mirrored into
+the local add-on config so the editor displays it. Before replacing different
+nonempty local rules, the add-on preserves them in
+`user_files/dynamic_dr_rules_before_sync_v1.json` inside the add-on directory.
+The backup is never overwritten. If creating or validating it fails, the synced
+rules remain active in memory and the local add-on config is left untouched.
+Editing the add-on config or
+rule table while a collection is open updates the collection value through
+Anki's configuration API. Changes made without an open profile are applied when
+a profile is next opened. Empty rules are preserved as an explicit synced value
+when saved. Anki syncs collection configuration as a single snapshot. A stale
+device that makes a newer, unrelated collection change before syncing can
+replace that snapshot and remove or revert the rules; sync each device before
+making offline changes. The add-on's local backup can help recover older rules,
+but it is not a per-device conflict-resolution mechanism.
+
+An unknown future format is left untouched. If this add-on is disabled or
+uninstalled, its last synced rules remain in the collection; clear the rules
+and sync first to stop a compatible mobile client from applying them.
+
 ## Add-on Config Read
 
 The add-on reads Anki's add-on config through `mw.addonManager.getConfig(__name__)`
