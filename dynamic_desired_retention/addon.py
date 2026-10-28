@@ -263,6 +263,13 @@ class DynamicDesiredRetentionAddon:
         )
         if desired_retention is not None:
             reviewer._desired_retention_override = desired_retention
+            # Newer desktop builds can record a grade target exactly, instead
+            # of mapping it a second time through native Dynamic DR. Older
+            # builds do not expose this flag and retain their usual behavior.
+            if hasattr(reviewer, "_desired_retention_override_is_final"):
+                reviewer._desired_retention_override_is_final = any(
+                    rule.grade == grade for rule in self._grade_rules
+                )
         return answer
 
     def add_card_info_rows(self, rows: list[Any], card: Any) -> None:

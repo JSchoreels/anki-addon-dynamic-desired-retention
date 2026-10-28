@@ -56,6 +56,7 @@ class FakeReviewer:
         self.card = FakeCard()
         self._v3 = type("V3", (), {"states": _states_with_again_review()})()
         self._desired_retention_override = None
+        self._desired_retention_override_is_final = False
 
 
 class FakeCard:
@@ -242,6 +243,36 @@ def test_addon_updates_answer_override_for_grade_rule() -> None:
 
     assert returned_answer == (True, 1)
     assert reviewer._desired_retention_override == 0.99
+    assert reviewer._desired_retention_override_is_final is True
+
+
+def test_answer_without_a_grade_rule_keeps_the_base_override() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = [GradeRule("again", "absolute", 0.99)]
+    addon._matcher = DesiredRetentionMatcher(
+        [Rule("note:Japanese", 0.6)], [], logger, grade_rules=addon._grade_rules
+    )
+    reviewer = FakeReviewer()
+
+    addon.update_answer_desired_retention((True, 3), reviewer, reviewer.card)
+
+    assert reviewer._desired_retention_override == 0.6
+    assert reviewer._desired_retention_override_is_final is False
+
+
+def test_answer_still_works_with_older_reviewers() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = [GradeRule("again", "absolute", 0.99)]
+    addon._matcher = DesiredRetentionMatcher([], [], logger, grade_rules=addon._grade_rules)
+    reviewer = FakeReviewer()
+    del reviewer._desired_retention_override_is_final
+
+    addon.update_answer_desired_retention((True, 1), reviewer, reviewer.card)
+
+    assert reviewer._desired_retention_override == 0.99
+    assert not hasattr(reviewer, "_desired_retention_override_is_final")
 
 
 def test_addon_clamps_answer_button_state_for_field_slice_interval_bounds() -> None:
