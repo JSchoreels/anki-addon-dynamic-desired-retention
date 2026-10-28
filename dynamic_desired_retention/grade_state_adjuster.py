@@ -21,6 +21,7 @@ def apply_grade_rules_to_scheduling_states(
     states: Any,
     base_desired_retention: float | None,
     grade_rules: list[GradeRule],
+    applied_grade_targets: dict[Grade, float],
     logger: Logger,
 ) -> bool:
     if not grade_rules:
@@ -44,18 +45,18 @@ def apply_grade_rules_to_scheduling_states(
             continue
 
         state = getattr(states, state_name, None)
-        changed = (
-            apply_desired_retention_to_scheduling_state(
-                interval_fn=interval_fn,
-                max_interval=max_interval,
-                card=card,
-                state=state,
-                desired_retention=desired_retention,
-                grade=grade,
-                logger=logger,
-            )
-            or changed
+        grade_changed = apply_desired_retention_to_scheduling_state(
+            interval_fn=interval_fn,
+            max_interval=max_interval,
+            card=card,
+            state=state,
+            desired_retention=desired_retention,
+            grade=grade,
+            logger=logger,
         )
+        if grade_changed and any(rule.grade == grade for rule in grade_rules):
+            applied_grade_targets[grade] = desired_retention
+        changed = grade_changed or changed
 
     return changed
 

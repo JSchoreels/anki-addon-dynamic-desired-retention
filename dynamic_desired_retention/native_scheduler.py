@@ -3,7 +3,7 @@ from __future__ import annotations
 from logging import Logger
 from typing import Any
 
-from .grade_rules import GradeRule, apply_grade_rule
+from .grade_rules import Grade, GradeRule, apply_grade_rule
 from .grade_state_adjuster import (
     GRADE_STATE_NAMES,
     apply_desired_retention_to_scheduling_state,
@@ -28,6 +28,7 @@ def apply_grade_rules_with_scheduler_states(
     states: Any,
     base_desired_retention: float | None,
     grade_rules: list[GradeRule],
+    applied_grade_targets: dict[Grade, float],
     logger: Logger,
 ) -> bool:
     if not grade_rules:
@@ -79,18 +80,18 @@ def apply_grade_rules_with_scheduler_states(
                     )
                     missing_interval_api_logged = True
                 continue
-            changed = (
-                apply_desired_retention_to_scheduling_state(
-                    interval_fn=interval_fn,
-                    max_interval=max_interval,
-                    card=card,
-                    state=target_state,
-                    desired_retention=desired_retention,
-                    grade=grade,
-                    logger=logger,
-                )
-                or changed
+            grade_changed = apply_desired_retention_to_scheduling_state(
+                interval_fn=interval_fn,
+                max_interval=max_interval,
+                card=card,
+                state=target_state,
+                desired_retention=desired_retention,
+                grade=grade,
+                logger=logger,
             )
+            if grade_changed:
+                applied_grade_targets[grade] = desired_retention
+            changed = grade_changed or changed
             continue
 
         source_state = getattr(source_states, state_name, None)
@@ -99,6 +100,8 @@ def apply_grade_rules_with_scheduler_states(
             continue
 
         target_state.CopyFrom(source_state)
+        if has_grade_rule:
+            applied_grade_targets[grade] = desired_retention
         changed = True
 
     return changed

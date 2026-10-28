@@ -163,6 +163,8 @@ class DynamicDesiredRetentionAddon:
         return results
 
     def update_scheduling_states(self, states: Any, reviewer: Any, card: Any) -> Any:
+        applied_grade_targets: dict[Grade, float] = {}
+        reviewer._dynamic_dr_applied_grade_targets = (card.id, applied_grade_targets)
         if not self._grade_rules and not self._field_rule_interval_bounds_enabled:
             return states
 
@@ -202,6 +204,7 @@ class DynamicDesiredRetentionAddon:
                     states=states,
                     base_desired_retention=base_desired_retention,
                     grade_rules=self._grade_rules,
+                    applied_grade_targets=applied_grade_targets,
                     logger=self._logger,
                 )
             else:
@@ -211,6 +214,7 @@ class DynamicDesiredRetentionAddon:
                     states=states,
                     base_desired_retention=base_desired_retention,
                     grade_rules=self._grade_rules,
+                    applied_grade_targets=applied_grade_targets,
                     logger=self._logger,
                 )
         if base_match is not None:
@@ -263,12 +267,15 @@ class DynamicDesiredRetentionAddon:
         )
         if desired_retention is not None:
             reviewer._desired_retention_override = desired_retention
-            # Newer desktop builds can record a grade target exactly, instead
-            # of mapping it a second time through native Dynamic DR. Older
-            # builds do not expose this flag and retain their usual behavior.
+            # Mark a target final only when it was applied to this card's
+            # scheduling state. Otherwise native Dynamic DR may still own it.
             if hasattr(reviewer, "_desired_retention_override_is_final"):
-                reviewer._desired_retention_override_is_final = any(
-                    rule.grade == grade for rule in self._grade_rules
+                applied_card, applied_targets = getattr(
+                    reviewer, "_dynamic_dr_applied_grade_targets", (None, {})
+                )
+                reviewer._desired_retention_override_is_final = (
+                    applied_card == card.id
+                    and applied_targets.get(grade) == desired_retention
                 )
         return answer
 

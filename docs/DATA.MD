@@ -386,10 +386,11 @@ grade state, such as `again`, `hard`, `good`, or `easy`.
 When the user answers, the add-on also updates the reviewer's
 `desired_retention_override` to the selected grade's adjusted desired retention.
 On desktop builds that support final per-grade overrides, it also marks a matched
-grade rule as the final target, so native Dynamic DR does not replace the stored
-value with a second grade mapping. Builds without that support retain their
-existing answer behavior. Buttons without a grade rule still use the normal
-native Dynamic DR mapping. If no base desired retention
+grade rule as the final target when that target was applied to this card's
+answer state, so native Dynamic DR does not replace the stored value with a
+second grade mapping. If the interval could not be adjusted, the native mapping
+is retained. Builds without that support retain their existing answer behavior.
+Buttons without a grade rule still use the normal native Dynamic DR mapping. If no base desired retention
 is available, a relative grade rule is skipped and the add-on logs that skip at
 debug level. Absolute grade rules do not need a base desired retention.
 

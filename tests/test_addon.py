@@ -236,6 +236,7 @@ def test_addon_updates_answer_override_for_grade_rule() -> None:
         grade_rules=[GradeRule("again", "absolute", 0.99)],
     )
     reviewer = FakeReviewer()
+    addon.update_scheduling_states(reviewer._v3.states, reviewer, reviewer.card)
 
     returned_answer = addon.update_answer_desired_retention(
         (True, 1), reviewer, reviewer.card
@@ -244,6 +245,57 @@ def test_addon_updates_answer_override_for_grade_rule() -> None:
     assert returned_answer == (True, 1)
     assert reviewer._desired_retention_override == 0.99
     assert reviewer._desired_retention_override_is_final is True
+
+
+def test_grade_without_adjustable_interval_is_not_marked_final() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = [GradeRule("again", "absolute", 0.99)]
+    addon._matcher = DesiredRetentionMatcher([], [], logger, grade_rules=addon._grade_rules)
+    reviewer = FakeReviewer()
+    reviewer._v3.states.again.normal.review.ClearField("memory_state")
+
+    addon.update_scheduling_states(reviewer._v3.states, reviewer, reviewer.card)
+    addon.update_answer_desired_retention((True, 1), reviewer, reviewer.card)
+
+    assert reviewer._desired_retention_override == 0.99
+    assert reviewer._desired_retention_override_is_final is False
+
+
+def test_native_grade_without_interval_api_keeps_native_mapping() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = [GradeRule("again", "absolute", 0.99)]
+    addon._matcher = DesiredRetentionMatcher([], [], logger, grade_rules=addon._grade_rules)
+    reviewer = FakeReviewer()
+    reviewer.mw.col.decks = SimpleNamespace(
+        config_dict_for_deck_id=lambda _: {"fsrsDynamicDesiredRetentionEnabled": True}
+    )
+    source_states = _states_with_again_review()
+    source_states.dynamic_desired_retentions.extend([0.84] * 4)
+    reviewer.mw.col.sched.get_scheduling_states = lambda *args, **kwargs: source_states
+    reviewer.mw.col.fsrs_interval_at_retrievability = None
+
+    addon.update_scheduling_states(reviewer._v3.states, reviewer, reviewer.card)
+    addon.update_answer_desired_retention((True, 1), reviewer, reviewer.card)
+
+    assert reviewer._desired_retention_override == 0.99
+    assert reviewer._desired_retention_override_is_final is False
+
+
+def test_adjusted_grade_is_not_reused_for_a_different_card() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = [GradeRule("again", "absolute", 0.99)]
+    addon._matcher = DesiredRetentionMatcher([], [], logger, grade_rules=addon._grade_rules)
+    reviewer = FakeReviewer()
+    addon.update_scheduling_states(reviewer._v3.states, reviewer, reviewer.card)
+    next_card = FakeCard()
+    next_card.id = 456
+
+    addon.update_answer_desired_retention((True, 1), reviewer, next_card)
+
+    assert reviewer._desired_retention_override_is_final is False
 
 
 def test_answer_without_a_grade_rule_keeps_the_base_override() -> None:
