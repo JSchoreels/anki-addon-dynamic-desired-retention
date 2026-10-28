@@ -55,6 +55,13 @@ desired retention.
 
 You can edit search rules, field rules and grade rules from
 `Tools > FSRS Dynamic Desired Retention Table`.
+These rules are stored with the collection and sync to Kuma versions that
+support the same Dynamic Desired Retention rule format. To share existing local
+rules, sync the collection, save the rule table once, and sync again. Once
+present, the synced rules are authoritative for that profile. Clear the rules and sync
+before disabling or removing the add-on if other devices should stop using them.
+Anki syncs collection configuration as a snapshot, so sync each device before
+making offline changes; an older snapshot can otherwise remove or revert rules.
 In the editor, `90`, `90%`, and `0.90` all mean 90%.
 The editor displays those values as `90`.
 When editing JSON directly, use decimal values: `0.9` means 90%.

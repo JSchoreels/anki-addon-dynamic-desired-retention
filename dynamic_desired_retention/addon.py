@@ -28,6 +28,14 @@ from .native_scheduler import (
     apply_grade_rules_with_scheduler_states,
     core_dynamic_desired_retention_enabled,
 )
+from .synced_rules import (
+    MISSING,
+    UNAVAILABLE,
+    backup_local_rules,
+    local_config_with_rules,
+    read_rules,
+    write_rules,
+)
 from .ui import RulesTableDialog
 
 
@@ -41,6 +49,7 @@ class DynamicDesiredRetentionAddon:
         self._field_rule_interval_bounds_enabled = False
         self._matcher = DesiredRetentionMatcher([], [], logger)
         self._rules_action: QAction | None = None
+        self._local_rules_pending = False
 
     def setup(self) -> None:
         self._reload_config()
@@ -48,6 +57,13 @@ class DynamicDesiredRetentionAddon:
         if mw is not None:
             mw.addonManager.setConfigUpdatedAction(self._module, self._on_config_updated)
             self._add_tools_menu_entry()
+        for hook_name, callback in (
+            ("profile_did_open", self._on_profile_opened),
+            ("sync_did_finish", self._on_sync_finished),
+        ):
+            hook = getattr(gui_hooks, hook_name, None)
+            if hook is not None:
+                hook.append(callback)
         gui_hooks.reviewer_will_compute_desired_retention.append(
             self.compute_desired_retention
         )
@@ -316,12 +332,58 @@ class DynamicDesiredRetentionAddon:
 
     def _on_config_updated(self, _config: Any = None) -> None:
         self._reload_config()
+        collection = getattr(mw, "col", None) if mw is not None else None
+        config = self._local_config()
+        if collection is None:
+            self._local_rules_pending = True
+        else:
+            self._local_rules_pending = False
+            write_rules(collection, config, self._logger)
         _notify_rwkv_dynamic_desired_retention_changed(self._logger)
 
-    def _reload_config(self) -> None:
-        config = None
-        if mw is not None:
-            config = mw.addonManager.getConfig(self._module)
+    def _on_profile_opened(self) -> None:
+        self._refresh_synced_rules()
+
+    def _on_sync_finished(self) -> None:
+        self._refresh_synced_rules()
+
+    def _refresh_synced_rules(self) -> None:
+        if mw is None or (collection := getattr(mw, "col", None)) is None:
+            return
+        local = self._local_config()
+        synced = read_rules(collection, self._logger)
+        if synced is UNAVAILABLE:
+            self._reload_config()
+            _notify_rwkv_dynamic_desired_retention_changed(self._logger)
+            return
+        if self._local_rules_pending:
+            self._local_rules_pending = not write_rules(collection, local, self._logger)
+        elif synced is MISSING:
+            # The local add-on config may predate an unseen remote collection
+            # config. Do not make the collection newer merely by opening it.
+            pass
+        else:
+            assert isinstance(synced, dict)
+            updated = local_config_with_rules(local, synced)
+            if updated != local:
+                if not backup_local_rules(mw.addonManager, self._module, local, self._logger):
+                    # Use the synced rules for this profile but do not replace
+                    # the user's local configuration if the backup failed.
+                    self._reload_config(synced)
+                    _notify_rwkv_dynamic_desired_retention_changed(self._logger)
+                    return
+                mw.addonManager.writeConfig(self._module, updated)
+        self._reload_config()
+        _notify_rwkv_dynamic_desired_retention_changed(self._logger)
+
+    def _local_config(self) -> dict[str, Any]:
+        if mw is None:
+            return {}
+        config = mw.addonManager.getConfig(self._module)
+        return config if isinstance(config, dict) else {}
+
+    def _reload_config(self, override: dict[str, Any] | None = None) -> None:
+        config = override if override is not None else self._local_config()
         self._rules = load_rules(config, self._logger)
         self._field_rules = load_field_rules(config, self._logger)
         self._grade_rules = load_grade_rules(config, self._logger)
