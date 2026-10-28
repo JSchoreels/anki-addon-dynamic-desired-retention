@@ -163,6 +163,11 @@ class DynamicDesiredRetentionAddon:
         return results
 
     def update_scheduling_states(self, states: Any, reviewer: Any, card: Any) -> Any:
+        applied_grade_targets: dict[Grade, float] = {}
+        applied_grade_states: dict[Grade, bytes] = {}
+        reviewer._dynamic_dr_applied_grade_targets = (
+            card.id, applied_grade_targets, applied_grade_states
+        )
         if not self._grade_rules and not self._field_rule_interval_bounds_enabled:
             return states
 
@@ -202,6 +207,7 @@ class DynamicDesiredRetentionAddon:
                     states=states,
                     base_desired_retention=base_desired_retention,
                     grade_rules=self._grade_rules,
+                    applied_grade_targets=applied_grade_targets,
                     logger=self._logger,
                 )
             else:
@@ -211,6 +217,7 @@ class DynamicDesiredRetentionAddon:
                     states=states,
                     base_desired_retention=base_desired_retention,
                     grade_rules=self._grade_rules,
+                    applied_grade_targets=applied_grade_targets,
                     logger=self._logger,
                 )
         if base_match is not None:
@@ -222,6 +229,12 @@ class DynamicDesiredRetentionAddon:
                 )
                 or changed
             )
+
+        for grade in applied_grade_targets:
+            state = getattr(states, grade, None)
+            serialize = getattr(state, "SerializeToString", None)
+            if callable(serialize):
+                applied_grade_states[grade] = serialize()
 
         if changed:
             self._logger.debug(
@@ -263,6 +276,20 @@ class DynamicDesiredRetentionAddon:
         )
         if desired_retention is not None:
             reviewer._desired_retention_override = desired_retention
+            # Mark a target final only when it was applied to this card's
+            # scheduling state. Otherwise native Dynamic DR may still own it.
+            if hasattr(reviewer, "_desired_retention_override_is_final"):
+                applied_card, applied_targets, applied_states = getattr(
+                    reviewer, "_dynamic_dr_applied_grade_targets", (None, {}, {})
+                )
+                states = getattr(getattr(reviewer, "_v3", None), "states", None)
+                serialize = getattr(getattr(states, grade, None), "SerializeToString", None)
+                reviewer._desired_retention_override_is_final = (
+                    applied_card == card.id
+                    and applied_targets.get(grade) == desired_retention
+                    and callable(serialize)
+                    and applied_states.get(grade) == serialize()
+                )
         return answer
 
     def add_card_info_rows(self, rows: list[Any], card: Any) -> None:
