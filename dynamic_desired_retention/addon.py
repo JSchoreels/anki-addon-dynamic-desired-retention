@@ -164,7 +164,10 @@ class DynamicDesiredRetentionAddon:
 
     def update_scheduling_states(self, states: Any, reviewer: Any, card: Any) -> Any:
         applied_grade_targets: dict[Grade, float] = {}
-        reviewer._dynamic_dr_applied_grade_targets = (card.id, applied_grade_targets)
+        applied_grade_states: dict[Grade, bytes] = {}
+        reviewer._dynamic_dr_applied_grade_targets = (
+            card.id, applied_grade_targets, applied_grade_states
+        )
         if not self._grade_rules and not self._field_rule_interval_bounds_enabled:
             return states
 
@@ -227,6 +230,12 @@ class DynamicDesiredRetentionAddon:
                 or changed
             )
 
+        for grade in applied_grade_targets:
+            state = getattr(states, grade, None)
+            serialize = getattr(state, "SerializeToString", None)
+            if callable(serialize):
+                applied_grade_states[grade] = serialize()
+
         if changed:
             self._logger.debug(
                 "applied dynamic desired retention scheduling state changes for card %s",
@@ -270,12 +279,16 @@ class DynamicDesiredRetentionAddon:
             # Mark a target final only when it was applied to this card's
             # scheduling state. Otherwise native Dynamic DR may still own it.
             if hasattr(reviewer, "_desired_retention_override_is_final"):
-                applied_card, applied_targets = getattr(
-                    reviewer, "_dynamic_dr_applied_grade_targets", (None, {})
+                applied_card, applied_targets, applied_states = getattr(
+                    reviewer, "_dynamic_dr_applied_grade_targets", (None, {}, {})
                 )
+                states = getattr(getattr(reviewer, "_v3", None), "states", None)
+                serialize = getattr(getattr(states, grade, None), "SerializeToString", None)
                 reviewer._desired_retention_override_is_final = (
                     applied_card == card.id
                     and applied_targets.get(grade) == desired_retention
+                    and callable(serialize)
+                    and applied_states.get(grade) == serialize()
                 )
         return answer
 

@@ -298,6 +298,20 @@ def test_adjusted_grade_is_not_reused_for_a_different_card() -> None:
     assert reviewer._desired_retention_override_is_final is False
 
 
+def test_grade_modified_after_the_hook_is_not_marked_final() -> None:
+    logger = logging.getLogger("test")
+    addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
+    addon._grade_rules = [GradeRule("again", "absolute", 0.99)]
+    addon._matcher = DesiredRetentionMatcher([], [], logger, grade_rules=addon._grade_rules)
+    reviewer = FakeReviewer()
+    addon.update_scheduling_states(reviewer._v3.states, reviewer, reviewer.card)
+    reviewer._v3.states.again.normal.review.scheduled_days += 1
+
+    addon.update_answer_desired_retention((True, 1), reviewer, reviewer.card)
+
+    assert reviewer._desired_retention_override_is_final is False
+
+
 def test_answer_without_a_grade_rule_keeps_the_base_override() -> None:
     logger = logging.getLogger("test")
     addon = DynamicDesiredRetentionAddon(module="test", logger=logger)
