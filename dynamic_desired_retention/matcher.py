@@ -752,6 +752,12 @@ def _linear_desired_retention_match(
             highest_threshold, f"> {_format_number(highest_threshold.value)}"
         )
 
+    for threshold in thresholds:
+        if value == threshold.value:
+            return _numeric_match_from_threshold(
+                threshold, f"== {_format_number(threshold.value)}"
+            )
+
     for lower_threshold, upper_threshold in zip(thresholds, thresholds[1:]):
         if lower_threshold.value < value < upper_threshold.value:
             ratio = (value - lower_threshold.value) / (

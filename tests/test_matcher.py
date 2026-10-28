@@ -411,6 +411,61 @@ def test_numeric_field_rule_without_interpolation_uses_steps() -> None:
     assert desired_retention == 0.8
 
 
+@pytest.mark.parametrize(
+    "direction,retentions", [("lower", (0.9, 0.8, 0.7)), ("higher", (0.7, 0.8, 0.9))]
+)
+@pytest.mark.parametrize("value,index", [("1000", 0), ("2000", 1), ("3000", 2)])
+def test_linear_numeric_rule_matches_exact_threshold_and_its_bounds(
+    direction: str, retentions: tuple[float, float, float], value: str, index: int
+) -> None:
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                value_type="number",
+                relative_top_direction=direction,
+                linear_between_thresholds=True,
+                thresholds=[
+                    FieldThreshold("1000", retentions[0], 2, 10),
+                    FieldThreshold("2000", retentions[1], 3, 20),
+                    FieldThreshold("3000", retentions[2], 4, 30),
+                ],
+            )
+        ],
+        logging.getLogger("test"),
+    )
+    match = matcher.base_desired_retention_match_for_card(
+        collection=FakeCollection(set()),
+        card=FakeCard(fields={"Frequency": value}),
+    )
+    assert match is not None
+    assert match.desired_retention == retentions[index]
+    assert (match.minimum_interval, match.maximum_interval) == [(2, 10), (3, 20), (4, 30)][index]
+
+
+def test_linear_rule_with_one_threshold_matches_that_threshold() -> None:
+    matcher = DesiredRetentionMatcher(
+        [],
+        [
+            FieldRule(
+                note_type="Japanese",
+                field="Frequency",
+                value_type="number",
+                linear_between_thresholds=True,
+                thresholds=[FieldThreshold("1000", 0.9)],
+            )
+        ],
+        logging.getLogger("test"),
+    )
+    assert matcher.desired_retention_for_card(
+        collection=FakeCollection(set()),
+        card=FakeCard(fields={"Frequency": "1000"}),
+        current_desired_retention=0.7,
+    ) == 0.9
+
+
 def test_numeric_step_field_rule_uses_first_threshold_below_first_value() -> None:
     matcher = DesiredRetentionMatcher(
         [],
